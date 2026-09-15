@@ -1,0 +1,689 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Ledger — Portfolio Tracker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,wght@0,400;0,600;0,700;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  :root{
+    --paper: #F6F4EE;
+    --paper-raised: #FCFBF7;
+    --ink: #1C1B18;
+    --ink-soft: #5B584F;
+    --rule: #DBD5C4;
+    --gain: #2F5233;
+    --gain-soft: #E7EEE3;
+    --loss: #8C3A2E;
+    --loss-soft: #F3E4DF;
+    --gold: #A6803D;
+    --focus: #2657A6;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:var(--paper);
+    color:var(--ink);
+    font-family:'Source Serif 4', Georgia, serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .mono{font-family:'IBM Plex Mono', ui-monospace, monospace;}
+  a{color:inherit;}
+  button{font-family:inherit;}
+  ::selection{background:#D9CFB0;}
+  :focus-visible{outline:2px solid var(--focus); outline-offset:2px;}
+
+  .masthead{
+    max-width:1040px;
+    margin:0 auto;
+    padding:28px 24px 18px;
+    display:flex;
+    align-items:baseline;
+    justify-content:space-between;
+    border-bottom:1px solid var(--rule);
+  }
+  .masthead h1{
+    font-size:28px;
+    font-weight:700;
+    margin:0;
+    letter-spacing:-0.01em;
+  }
+  .masthead .date-line{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:12px;
+    color:var(--ink-soft);
+  }
+  .masthead-right{display:flex; align-items:center; gap:14px;}
+  .icon-btn{
+    background:none;
+    border:1px solid var(--rule);
+    border-radius:5px;
+    width:34px; height:34px;
+    display:flex; align-items:center; justify-content:center;
+    cursor:pointer;
+    color:var(--ink-soft);
+  }
+  .icon-btn:hover{background:var(--paper-raised); color:var(--ink);}
+
+  main{max-width:1040px; margin:0 auto; padding:0 24px 80px;}
+
+  @keyframes riseIn{
+    from{ opacity:0; transform:translateY(8px); }
+    to{ opacity:1; transform:translateY(0); }
+  }
+  @media (prefers-reduced-motion: reduce){
+    .hero{ animation:none !important; }
+  }
+  .hero{
+    display:grid;
+    grid-template-columns:1.3fr 1fr;
+    gap:0;
+    padding:40px 28px;
+    margin-top:24px;
+    border-radius:10px;
+    background:
+      radial-gradient(120% 160% at 100% 0%, rgba(166,128,61,0.10), transparent 55%),
+      linear-gradient(180deg, var(--paper-raised), var(--paper));
+    border:1px solid var(--rule);
+    animation:riseIn 0.5s ease-out;
+  }
+  .hero-value .label{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:12px;
+    color:var(--ink-soft);
+    margin-bottom:6px;
+  }
+  .hero-value .amount{
+    font-size:52px;
+    font-weight:700;
+    line-height:1;
+    font-family:'IBM Plex Mono', monospace;
+    letter-spacing:-0.02em;
+  }
+  .hero-value .amount.placeholder-amt{color:var(--ink-soft); font-weight:400;}
+  .hero-stats{display:flex; flex-direction:column; justify-content:center; gap:14px; border-left:1px solid var(--rule); padding-left:28px;}
+  .hero-stat{display:flex; justify-content:space-between; align-items:baseline;}
+  .hero-stat .k{font-size:13px; color:var(--ink-soft);}
+  .hero-stat .v{font-family:'IBM Plex Mono', monospace; font-size:16px; font-weight:600;}
+  .pos{color:var(--gain);}
+  .neg{color:var(--loss);}
+
+  .section{padding:32px 0; border-bottom:1px solid var(--rule);}
+  .section-head{display:flex; align-items:baseline; justify-content:space-between; margin-bottom:16px;}
+  .section-head h2{font-size:18px; margin:0; font-weight:600;}
+  .section-head .hint{font-size:12.5px; color:var(--ink-soft); font-family:'IBM Plex Mono', monospace;}
+
+  table{width:100%; border-collapse:collapse;}
+  th{
+    text-align:left;
+    font-family:'IBM Plex Mono', monospace;
+    font-size:11px;
+    color:var(--ink-soft);
+    font-weight:500;
+    padding:0 10px 8px;
+    border-bottom:1px solid var(--rule);
+  }
+  th.num, td.num{text-align:right;}
+  td{padding:12px 10px; border-bottom:1px solid var(--rule); font-size:14.5px; vertical-align:middle;}
+  tr:last-child td{border-bottom:none;}
+  td.num, td.tick{font-family:'IBM Plex Mono', monospace;}
+  td.tick{font-weight:600;}
+  .row-name{color:var(--ink-soft); font-size:12.5px; display:block; margin-top:2px; font-family:'Source Serif 4', serif;}
+  .del-btn{
+    background:none; border:none; color:var(--ink-soft); cursor:pointer; font-size:13px;
+    font-family:'IBM Plex Mono', monospace; padding:4px 6px;
+  }
+  .del-btn:hover{color:var(--loss);}
+
+  .add-row{display:flex; gap:10px; flex-wrap:wrap; margin-top:16px;}
+  .add-row input{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:13px;
+    padding:9px 10px;
+    border:1px solid var(--rule);
+    border-radius:4px;
+    background:var(--paper-raised);
+    color:var(--ink);
+    min-width:90px;
+  }
+  .add-row input::placeholder{color:#A9A392;}
+  .btn{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:13px;
+    padding:9px 16px;
+    border-radius:4px;
+    border:1px solid var(--ink);
+    background:var(--ink);
+    color:var(--paper);
+    cursor:pointer;
+  }
+  .btn:hover{background:#3a382f;}
+  .btn.ghost{background:none; color:var(--ink); border-color:var(--rule);}
+  .btn.ghost:hover{border-color:var(--ink);}
+
+  .allocation-grid{display:grid; grid-template-columns:200px 1fr; gap:32px; align-items:center;}
+  .donut-wrap{position:relative; height:200px;}
+  .donut-center{
+    position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    pointer-events:none;
+  }
+  .donut-center .n{font-family:'IBM Plex Mono', monospace; font-size:22px; font-weight:600;}
+  .donut-center .l{font-size:11px; color:var(--ink-soft); font-family:'IBM Plex Mono', monospace;}
+  .allocation-list{display:flex; flex-direction:column; gap:11px;}
+  .alloc-row{display:grid; grid-template-columns:14px 1fr 52px; align-items:center; gap:10px;}
+  .alloc-dot{width:10px; height:10px; border-radius:50%; flex:none;}
+  .alloc-row .sector-name{font-size:13.5px;}
+  .alloc-pct{font-family:'IBM Plex Mono', monospace; font-size:12.5px; text-align:right; color:var(--ink-soft);}
+
+  .chart-wrap{height:220px;}
+  .perf-chart-wrap{height:auto; min-height:120px;}
+
+  @media (max-width:640px){
+    .allocation-grid{grid-template-columns:1fr;}
+    .donut-wrap{margin:0 auto;}
+  }
+
+  .empty{
+    padding:34px 20px; text-align:center; color:var(--ink-soft); font-size:14px;
+    border:1px dashed var(--rule); border-radius:6px;
+  }
+
+  .watch-item{display:flex; justify-content:space-between; align-items:center; padding:10px 0; border-bottom:1px solid var(--rule);}
+  .watch-item:last-child{border-bottom:none;}
+  .watch-tick{font-family:'IBM Plex Mono', monospace; font-weight:600;}
+  .watch-price{font-family:'IBM Plex Mono', monospace; display:flex; gap:10px; align-items:baseline;}
+
+  .modal-backdrop{
+    position:fixed; inset:0; background:rgba(28,27,24,0.45);
+    display:none; align-items:center; justify-content:center; z-index:10; padding:20px;
+  }
+  .modal-backdrop.open{display:flex;}
+  .modal{
+    background:var(--paper-raised); border-radius:8px; padding:26px; max-width:420px; width:100%;
+    border:1px solid var(--rule);
+  }
+  .modal h3{margin:0 0 6px; font-size:17px;}
+  .modal p{font-size:13px; color:var(--ink-soft); line-height:1.5; margin-top:0;}
+  .modal input{width:100%; margin:14px 0; padding:10px; font-family:'IBM Plex Mono',monospace; font-size:13px; border:1px solid var(--rule); border-radius:4px; background:var(--paper);}
+  .modal-actions{display:flex; justify-content:flex-end; gap:10px;}
+
+  .disclaimer{font-size:12px; color:var(--ink-soft); text-align:center; padding:30px 24px 0; max-width:640px; margin:0 auto; line-height:1.6;}
+
+  @media (max-width:640px){
+    .hero{grid-template-columns:1fr; gap:22px;}
+    .hero-stats{border-left:none; border-top:1px solid var(--rule); padding-left:0; padding-top:18px;}
+    .hero-value .amount{font-size:38px;}
+    th:nth-child(4), td:nth-child(4){display:none;}
+  }
+</style>
+</head>
+<body>
+
+<div class="masthead">
+  <div>
+    <h1>Ledger</h1>
+    <div class="date-line" id="lastUpdated">not yet refreshed</div>
+  </div>
+  <div class="masthead-right">
+    <span class="date-line" id="refreshState">—</span>
+    <button class="icon-btn" id="settingsBtn" title="Settings" aria-label="Settings">⚙</button>
+  </div>
+</div>
+
+<main>
+
+  <section class="hero">
+    <div class="hero-value">
+      <div class="label">TOTAL PORTFOLIO VALUE</div>
+      <div class="amount" id="totalValue">Add a holding to begin</div>
+    </div>
+    <div class="hero-stats">
+      <div class="hero-stat"><span class="k">Today</span><span class="v" id="dayChange">—</span></div>
+      <div class="hero-stat"><span class="k">All-time gain/loss</span><span class="v" id="totalGain">—</span></div>
+      <div class="hero-stat"><span class="k">Holdings</span><span class="v mono" id="holdingCount">0</span></div>
+    </div>
+  </section>
+
+  <section class="section" id="holdingsSection">
+    <div class="section-head">
+      <h2>Holdings</h2>
+      <span class="hint" id="apiHint"></span>
+    </div>
+    <div id="holdingsTableWrap"></div>
+    <div class="add-row">
+      <input id="newTicker" placeholder="TICKER (e.g. AAPL)" maxlength="8">
+      <input id="newShares" placeholder="Shares" type="number" step="any" min="0">
+      <input id="newCost" placeholder="Avg. cost / share ($)" type="number" step="any" min="0">
+      <button class="btn" id="addHoldingBtn">Add holding</button>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="section-head">
+      <h2>Value over time</h2>
+      <span class="hint">Logged each time you open Ledger</span>
+    </div>
+    <div class="chart-wrap"><canvas id="historyChart"></canvas></div>
+  </section>
+
+  <section class="section">
+    <div class="section-head">
+      <h2>Sector allocation</h2>
+    </div>
+    <div id="allocationWrap"><div class="empty">Add holdings to see how you're spread across sectors.</div></div>
+  </section>
+
+  <section class="section">
+    <div class="section-head">
+      <h2>Performance by holding</h2>
+      <span class="hint">Gain/loss vs. your cost basis</span>
+    </div>
+    <div class="perf-chart-wrap"><canvas id="perfChart"></canvas></div>
+  </section>
+
+  <section class="section" style="border-bottom:none;">
+    <div class="section-head">
+      <h2>Watchlist</h2>
+      <span class="hint">Prices only — not counted in your total</span>
+    </div>
+    <div id="watchlistWrap"><div class="empty">No stocks on your watchlist yet.</div></div>
+    <div class="add-row">
+      <input id="newWatchTicker" placeholder="TICKER to watch">
+      <button class="btn ghost" id="addWatchBtn">Add to watchlist</button>
+    </div>
+  </section>
+
+  <p class="disclaimer">
+    Ledger shows the data you enter and current market prices — it is a personal tracking tool, not investment advice.
+    It does not predict future prices and doesn't recommend what to buy or sell. Decide your own trades, or talk to a
+    licensed financial adviser for guidance tailored to you.
+  </p>
+
+</main>
+
+<div class="modal-backdrop" id="settingsModal">
+  <div class="modal">
+    <h3>Finnhub API key</h3>
+    <p>Ledger needs a free API key to fetch live prices. Get one in about a minute at
+      <a href="https://finnhub.io/register" target="_blank" rel="noopener">finnhub.io/register</a> — no card required.
+      Your key is stored only in this browser and is never sent anywhere except Finnhub.</p>
+    <input id="apiKeyInput" placeholder="Paste your API key here">
+    <div class="modal-actions">
+      <button class="btn ghost" id="closeModalBtn">Cancel</button>
+      <button class="btn" id="saveKeyBtn">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  const LS_HOLDINGS = 'ledger_holdings';
+  const LS_WATCHLIST = 'ledger_watchlist';
+  const LS_API_KEY = 'ledger_finnhub_key';
+  const LS_HISTORY = 'ledger_history';
+  const LS_META = 'ledger_meta'; // cached name/sector per ticker
+
+  let holdings = JSON.parse(localStorage.getItem(LS_HOLDINGS) || '[]');
+  let watchlist = JSON.parse(localStorage.getItem(LS_WATCHLIST) || '[]');
+  let apiKey = localStorage.getItem(LS_API_KEY) || '';
+  let history = JSON.parse(localStorage.getItem(LS_HISTORY) || '[]');
+  let meta = JSON.parse(localStorage.getItem(LS_META) || '{}');
+  let quotes = {}; // ticker -> {price, prevClose}
+  let chart = null;
+  let donutChart = null;
+  let perfChart = null;
+  let refreshTimer = null;
+  const PALETTE = ['#A6803D','#2F5233','#8C3A2E','#2657A6','#6B5B95','#4C7A73','#B0793D','#7A5C3E'];
+
+  const $ = id => document.getElementById(id);
+  const fmt$ = n => (n<0?'-$':'$') + Math.abs(n).toLocaleString(undefined,{minimumFractionDigits:2, maximumFractionDigits:2});
+  const fmtPct = n => (n>0?'+':'') + n.toFixed(2) + '%';
+
+  function save(){
+    localStorage.setItem(LS_HOLDINGS, JSON.stringify(holdings));
+    localStorage.setItem(LS_WATCHLIST, JSON.stringify(watchlist));
+    localStorage.setItem(LS_HISTORY, JSON.stringify(history));
+    localStorage.setItem(LS_META, JSON.stringify(meta));
+  }
+
+  // ---------- Settings modal ----------
+  $('settingsBtn').onclick = () => { $('apiKeyInput').value = apiKey; $('settingsModal').classList.add('open'); };
+  $('closeModalBtn').onclick = () => $('settingsModal').classList.remove('open');
+  $('saveKeyBtn').onclick = () => {
+    apiKey = $('apiKeyInput').value.trim();
+    localStorage.setItem(LS_API_KEY, apiKey);
+    $('settingsModal').classList.remove('open');
+    refreshAll();
+  };
+
+  // ---------- Add holding / watchlist ----------
+  $('addHoldingBtn').onclick = () => {
+    const ticker = $('newTicker').value.trim().toUpperCase();
+    const shares = parseFloat($('newShares').value);
+    const cost = parseFloat($('newCost').value);
+    if(!ticker || !shares || shares<=0 || isNaN(cost)){
+      alert('Enter a ticker, a positive number of shares, and your average cost per share.');
+      return;
+    }
+    const existing = holdings.find(h=>h.ticker===ticker);
+    if(existing){
+      const totalShares = existing.shares + shares;
+      existing.costBasis = ((existing.costBasis*existing.shares)+(cost*shares))/totalShares;
+      existing.shares = totalShares;
+    } else {
+      holdings.push({ticker, shares, costBasis: cost});
+    }
+    $('newTicker').value=''; $('newShares').value=''; $('newCost').value='';
+    save(); renderHoldings(); refreshAll();
+  };
+
+  $('addWatchBtn').onclick = () => {
+    const ticker = $('newWatchTicker').value.trim().toUpperCase();
+    if(!ticker) return;
+    if(!watchlist.includes(ticker)) watchlist.push(ticker);
+    $('newWatchTicker').value='';
+    save(); renderWatchlist(); refreshAll();
+  };
+
+  function removeHolding(ticker){
+    holdings = holdings.filter(h=>h.ticker!==ticker);
+    save(); renderHoldings(); renderHero(); renderAllocation(); renderPerf();
+  }
+  function removeWatch(ticker){
+    watchlist = watchlist.filter(t=>t!==ticker);
+    save(); renderWatchlist();
+  }
+
+  // ---------- Fetching ----------
+  async function fetchQuote(ticker){
+    const url = `https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(ticker)}&token=${apiKey}`;
+    const res = await fetch(url);
+    if(!res.ok) throw new Error('quote failed');
+    const d = await res.json();
+    return {price: d.c, prevClose: d.pc};
+  }
+  async function fetchProfile(ticker){
+    const url = `https://finnhub.io/api/v1/stock/profile2?symbol=${encodeURIComponent(ticker)}&token=${apiKey}`;
+    const res = await fetch(url);
+    if(!res.ok) throw new Error('profile failed');
+    const d = await res.json();
+    return {name: d.name || ticker, sector: d.finnhubIndustry || 'Unclassified'};
+  }
+
+  async function refreshAll(){
+    const tickers = Array.from(new Set([...holdings.map(h=>h.ticker), ...watchlist]));
+    if(!apiKey){
+      $('apiHint').textContent = 'Add a free API key (⚙) to load live prices';
+      renderHoldings(); renderWatchlist(); renderHero(); renderAllocation(); renderPerf();
+      return;
+    }
+    if(tickers.length===0){
+      $('apiHint').textContent='';
+      renderHoldings(); renderWatchlist(); renderHero(); renderAllocation(); renderPerf();
+      return;
+    }
+    $('refreshState').textContent = 'refreshing…';
+    $('apiHint').textContent = '';
+    try{
+      await Promise.all(tickers.map(async t => {
+        try{
+          const q = await fetchQuote(t);
+          quotes[t] = q;
+          if(!meta[t]){
+            try{ meta[t] = await fetchProfile(t); } catch(e){ meta[t] = {name:t, sector:'Unclassified'}; }
+          }
+        } catch(e){ /* skip ticker on failure */ }
+      }));
+      save();
+      $('lastUpdated').textContent = 'updated ' + new Date().toLocaleTimeString();
+      $('refreshState').textContent = 'auto-refresh: on';
+      logHistorySnapshot();
+    } catch(e){
+      $('refreshState').textContent = 'refresh failed';
+    }
+    renderHoldings(); renderWatchlist(); renderHero(); renderAllocation(); renderPerf(); renderChart();
+  }
+
+  function logHistorySnapshot(){
+    const total = holdings.reduce((sum,h)=>{
+      const q = quotes[h.ticker];
+      return sum + (q ? q.price*h.shares : 0);
+    },0);
+    if(total<=0) return;
+    const today = new Date().toISOString().slice(0,10);
+    const last = history[history.length-1];
+    if(last && last.date===today){ last.value = total; }
+    else { history.push({date: today, value: total}); }
+    if(history.length>90) history = history.slice(-90);
+  }
+
+  // ---------- Rendering ----------
+  function renderHero(){
+    if(holdings.length===0){
+      $('totalValue').textContent = 'Add a holding to begin';
+      $('totalValue').classList.add('placeholder-amt');
+      $('dayChange').textContent='—'; $('totalGain').textContent='—';
+      $('holdingCount').textContent='0';
+      return;
+    }
+    $('totalValue').classList.remove('placeholder-amt');
+    let total=0, prevTotal=0, costTotal=0;
+    holdings.forEach(h=>{
+      const q = quotes[h.ticker];
+      const price = q ? q.price : h.costBasis;
+      const prev = q ? q.prevClose : h.costBasis;
+      total += price*h.shares;
+      prevTotal += prev*h.shares;
+      costTotal += h.costBasis*h.shares;
+    });
+    $('totalValue').textContent = fmt$(total);
+    const dayDelta = total-prevTotal;
+    const dayPct = prevTotal? (dayDelta/prevTotal*100):0;
+    const dEl = $('dayChange');
+    dEl.textContent = `${fmt$(dayDelta)} (${fmtPct(dayPct)})`;
+    dEl.className = 'v ' + (dayDelta>=0?'pos':'neg');
+    const gainDelta = total-costTotal;
+    const gainPct = costTotal? (gainDelta/costTotal*100):0;
+    const gEl = $('totalGain');
+    gEl.textContent = `${fmt$(gainDelta)} (${fmtPct(gainPct)})`;
+    gEl.className = 'v ' + (gainDelta>=0?'pos':'neg');
+    $('holdingCount').textContent = holdings.length;
+  }
+
+  function renderHoldings(){
+    const wrap = $('holdingsTableWrap');
+    if(holdings.length===0){
+      wrap.innerHTML = '<div class="empty">No holdings yet — add your first one below.</div>';
+      return;
+    }
+    let totalVal = holdings.reduce((s,h)=>{
+      const q=quotes[h.ticker]; return s+((q?q.price:h.costBasis)*h.shares);
+    },0);
+    const rows = holdings.map(h=>{
+      const q = quotes[h.ticker];
+      const price = q ? q.price : null;
+      const value = (price!==null?price:h.costBasis)*h.shares;
+      const gain = price!==null ? (price-h.costBasis)*h.shares : 0;
+      const gainPct = price!==null && h.costBasis ? ((price-h.costBasis)/h.costBasis*100) : 0;
+      const alloc = totalVal? (value/totalVal*100):0;
+      const name = (meta[h.ticker]||{}).name || '';
+      return `<tr>
+        <td class="tick">${h.ticker}${name?`<span class="row-name">${escapeHtml(name)}</span>`:''}</td>
+        <td class="num">${h.shares}</td>
+        <td class="num">${price!==null?fmt$(price):'—'}</td>
+        <td class="num">${fmt$(value)}</td>
+        <td class="num ${gain>=0?'pos':'neg'}">${price!==null?fmt$(gain)+' ('+fmtPct(gainPct)+')':'—'}</td>
+        <td class="num">${alloc.toFixed(1)}%</td>
+        <td class="num"><button class="del-btn" data-t="${h.ticker}" aria-label="Remove ${h.ticker}">remove</button></td>
+      </tr>`;
+    }).join('');
+    wrap.innerHTML = `<table>
+      <thead><tr>
+        <th>Ticker</th><th class="num">Shares</th><th class="num">Price</th><th class="num">Value</th>
+        <th class="num">Gain/loss</th><th class="num">Alloc.</th><th></th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+    wrap.querySelectorAll('.del-btn').forEach(b=> b.onclick = ()=> removeHolding(b.dataset.t));
+  }
+
+  function renderWatchlist(){
+    const wrap = $('watchlistWrap');
+    if(watchlist.length===0){
+      wrap.innerHTML = '<div class="empty">No stocks on your watchlist yet.</div>';
+      return;
+    }
+    wrap.innerHTML = watchlist.map(t=>{
+      const q = quotes[t];
+      const price = q ? fmt$(q.price) : '—';
+      let pct=0, pctStr='—';
+      if(q && q.prevClose){ pct = (q.price-q.prevClose)/q.prevClose*100; pctStr = fmtPct(pct); }
+      return `<div class="watch-item">
+        <span class="watch-tick">${t}</span>
+        <span class="watch-price">
+          <span>${price}</span>
+          <span class="${pct>=0?'pos':'neg'}">${pctStr}</span>
+          <button class="del-btn" data-t="${t}">remove</button>
+        </span>
+      </div>`;
+    }).join('');
+    wrap.querySelectorAll('.del-btn').forEach(b=> b.onclick = ()=> removeWatch(b.dataset.t));
+  }
+
+  function renderAllocation(){
+    const wrap = $('allocationWrap');
+    if(holdings.length===0){
+      wrap.innerHTML = '<div class="empty">Add holdings to see how you\'re spread across sectors.</div>';
+      if(donutChart){ donutChart.destroy(); donutChart=null; }
+      return;
+    }
+    const bySector = {};
+    let total=0;
+    holdings.forEach(h=>{
+      const q=quotes[h.ticker];
+      const value = (q?q.price:h.costBasis)*h.shares;
+      const sector = (meta[h.ticker]||{}).sector || 'Unclassified';
+      bySector[sector] = (bySector[sector]||0)+value;
+      total+=value;
+    });
+    const entries = Object.entries(bySector).sort((a,b)=>b[1]-a[1]);
+    const colors = entries.map((_,i)=>PALETTE[i % PALETTE.length]);
+
+    wrap.innerHTML = `<div class="allocation-grid">
+      <div class="donut-wrap">
+        <canvas id="allocDonut"></canvas>
+        <div class="donut-center"><span class="n">${entries.length}</span><span class="l">SECTOR${entries.length===1?'':'S'}</span></div>
+      </div>
+      <div class="allocation-list">${entries.map(([sector,val],i)=>{
+        const pct = total? val/total*100 : 0;
+        return `<div class="alloc-row">
+          <span class="alloc-dot" style="background:${colors[i]}"></span>
+          <span class="sector-name">${escapeHtml(sector)}</span>
+          <span class="alloc-pct">${pct.toFixed(1)}%</span>
+        </div>`;
+      }).join('')}</div>
+    </div>`;
+
+    const ctx = document.getElementById('allocDonut');
+    const data = entries.map(([,v])=>v);
+    if(donutChart){ donutChart.destroy(); }
+    donutChart = new Chart(ctx, {
+      type:'doughnut',
+      data:{ labels: entries.map(([s])=>s), datasets:[{ data, backgroundColor:colors, borderColor:'#F6F4EE', borderWidth:2 }] },
+      options:{
+        responsive:true, maintainAspectRatio:false, cutout:'68%',
+        plugins:{ legend:{display:false},
+          tooltip:{ callbacks:{ label: c => `${c.label}: ${(c.parsed/total*100).toFixed(1)}%` } } }
+      }
+    });
+  }
+
+  function renderPerf(){
+    const ctx = document.getElementById('perfChart');
+    if(holdings.length===0){
+      if(perfChart){ perfChart.destroy(); perfChart=null; }
+      ctx.parentElement.style.height = '0px';
+      return;
+    }
+    ctx.parentElement.style.height = Math.max(120, holdings.length*42) + 'px';
+    const rows = holdings.map(h=>{
+      const q = quotes[h.ticker];
+      const pct = q && h.costBasis ? ((q.price-h.costBasis)/h.costBasis*100) : 0;
+      return {ticker:h.ticker, pct};
+    });
+    const labels = rows.map(r=>r.ticker);
+    const data = rows.map(r=>Number(r.pct.toFixed(2)));
+    const colors = data.map(v=> v>=0 ? '#2F5233' : '#8C3A2E');
+    if(perfChart){
+      perfChart.data.labels = labels;
+      perfChart.data.datasets[0].data = data;
+      perfChart.data.datasets[0].backgroundColor = colors;
+      perfChart.update();
+      return;
+    }
+    perfChart = new Chart(ctx, {
+      type:'bar',
+      data:{ labels, datasets:[{ data, backgroundColor:colors, borderRadius:3, barThickness:16 }] },
+      options:{
+        indexAxis:'y', responsive:true, maintainAspectRatio:false,
+        plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label: c => fmtPct(c.parsed.x) } } },
+        scales:{
+          x:{ grid:{color:'#DBD5C4'}, ticks:{ font:{family:'IBM Plex Mono', size:10}, color:'#5B584F', callback:v=>v+'%' } },
+          y:{ grid:{display:false}, ticks:{ font:{family:'IBM Plex Mono', size:11, weight:600}, color:'#1C1B18' } }
+        }
+      }
+    });
+  }
+
+  function renderChart(){
+    const ctx = document.getElementById('historyChart');
+    if(history.length===0){
+      if(chart){ chart.destroy(); chart=null; }
+      return;
+    }
+    const labels = history.map(h=>h.date.slice(5));
+    const data = history.map(h=>h.value);
+    if(chart){
+      chart.data.labels = labels;
+      chart.data.datasets[0].data = data;
+      chart.update();
+      return;
+    }
+    chart = new Chart(ctx, {
+      type:'line',
+      data:{ labels, datasets:[{
+        data, borderColor:'#A6803D', backgroundColor:'rgba(166,128,61,0.08)',
+        borderWidth:2, pointRadius:0, fill:true, tension:0.15
+      }]},
+      options:{
+        responsive:true, maintainAspectRatio:false,
+        plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label: c => fmt$(c.parsed.y) } } },
+        scales:{
+          x:{ grid:{display:false}, ticks:{ font:{family:'IBM Plex Mono', size:10}, color:'#5B584F' } },
+          y:{ grid:{color:'#DBD5C4'}, ticks:{ font:{family:'IBM Plex Mono', size:10}, color:'#5B584F',
+              callback: v => '$'+v.toLocaleString() } }
+        }
+      }
+    });
+  }
+
+  function escapeHtml(s){
+    return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  // ---------- Init ----------
+  function init(){
+    renderHoldings(); renderWatchlist(); renderHero(); renderAllocation(); renderPerf(); renderChart();
+    if(!apiKey){
+      $('apiHint').textContent = 'Add a free API key (⚙) to load live prices';
+    }
+    refreshAll();
+    refreshTimer = setInterval(refreshAll, 30000);
+  }
+  init();
+})();
+</script>
+</body>
+</html>
