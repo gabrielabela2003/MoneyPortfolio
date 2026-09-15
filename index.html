@@ -409,6 +409,25 @@
     VUAA: {marketSymbol:'VUAA.MI', currency:'EUR', name:'Vanguard S&P 500 UCITS ETF', sector:'US Large Cap / Broad Market ETF'}
   };
 
+  // Keep VUAA as the user's display ticker. If an earlier version created a
+  // duplicate VUAA.MI holding, merge/remove it so the same investment is not
+  // counted twice. We only do this for the known display/market-symbol pair.
+  (function normalizeKnownTickers(){
+    const vuaa = holdings.find(h => h.ticker === 'VUAA');
+    const vuaaMi = holdings.find(h => h.ticker === 'VUAA.MI');
+    if(vuaaMi && vuaa){
+      holdings = holdings.filter(h => h.ticker !== 'VUAA.MI');
+    } else if(vuaaMi && !vuaa){
+      vuaaMi.ticker = 'VUAA';
+      holdings = holdings.filter((h,i,a) => i === a.findIndex(x => x.ticker === h.ticker));
+    }
+    const watchMi = watchlist.indexOf('VUAA.MI');
+    if(watchMi !== -1){
+      watchlist.splice(watchMi, 1);
+      if(!watchlist.includes('VUAA')) watchlist.push('VUAA');
+    }
+  })();
+
   function getAssetInfo(ticker){
     return ASSET_INFO[ticker] || {marketSymbol:ticker, currency:'USD', name:ticker, sector:'Unclassified'};
   }
@@ -437,6 +456,7 @@
   const PALETTE = ['#A6803D','#2F5233','#8C3A2E','#2657A6','#6B5B95','#4C7A73','#B0793D','#7A5C3E'];
 
   const $ = id => document.getElementById(id);
+  save();
   const fmt$ = n => (n<0?'-$':'$') + Math.abs(n).toLocaleString(undefined,{minimumFractionDigits:2, maximumFractionDigits:2});
   const fmtEUR = n => (n<0?'−€':'€') + Math.abs(n).toLocaleString(undefined,{minimumFractionDigits:2, maximumFractionDigits:2});
   const fmtNative = (n,currency) => currency==='EUR' ? fmtEUR(n) : fmt$(n);
@@ -518,15 +538,17 @@
     return {name: d.name || ticker, sector: d.finnhubIndustry || 'Unclassified'};
   }
   async function fetchFXRates(){
+    // Use the same Finnhub quote endpoint as equities. OANDA:EUR_USD is
+    // quoted as USD per EUR, so USD -> EUR is USD / EURUSD.
     fxRates.EUR = 1;
-    const url = `https://finnhub.io/api/v1/forex/rates?base=EUR&token=${apiKey}`;
+    const url = `https://finnhub.io/api/v1/quote?symbol=OANDA%3AEUR_USD&token=${apiKey}`;
     const res = await fetch(url);
-    if(!res.ok) throw new Error('FX rates failed');
+    if(!res.ok) throw new Error('EUR/USD quote failed');
     const d = await res.json();
-    const usd = Number(d?.quote?.USD ?? d?.rates?.USD);
-    if(!Number.isFinite(usd) || usd <= 0) throw new Error('EUR/USD rate unavailable');
-    fxRates.USD = usd;
-    return usd;
+    const eurUsd = Number(d?.c);
+    if(!Number.isFinite(eurUsd) || eurUsd <= 0) throw new Error('EUR/USD rate unavailable');
+    fxRates.USD = eurUsd;
+    return eurUsd;
   }
 
   async function refreshAll(){
@@ -545,7 +567,17 @@
     $('apiHint').textContent = '';
     try{
       const needsUSD = tickers.some(t => getAssetInfo(t).currency === 'USD');
-      if(needsUSD) await fetchFXRates();
+      let fxWarning = '';
+      if(needsUSD){
+        try{
+          await fetchFXRates();
+        } catch(e){
+          fxWarning = ' · FX unavailable';
+          // Do not block individual market quotes because an FX endpoint is
+          // unavailable. The EUR portfolio total will remain unavailable until
+          // a valid EUR/USD rate is obtained.
+        }
+      }
 
       await Promise.all(tickers.map(async t => {
         try{
@@ -560,7 +592,7 @@
       }));
       save();
       $('lastUpdated').textContent = 'updated ' + new Date().toLocaleTimeString();
-      $('refreshState').textContent = needsUSD ? `auto-refresh: on · EUR/USD ${fxRates.USD.toFixed(4)}` : 'auto-refresh: on';
+      $('refreshState').textContent = needsUSD && fxRates.USD ? `auto-refresh: on · EUR/USD ${fxRates.USD.toFixed(4)}${fxWarning}` : `auto-refresh: on${fxWarning}`;
       logHistorySnapshot();
     } catch(e){
       $('refreshState').textContent = 'refresh failed · ' + e.message;
