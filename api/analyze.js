@@ -81,7 +81,9 @@ The user contributes a monthly amount and wants help deciding:
 
 Important:
 - The supplied price is the current price available to Ledger, not a prediction.
+- Use valueEUR and allocation as the authoritative portfolio valuation fields when present.
 - Consider concentration, sector exposure, gains/losses, portfolio size, and the monthly contribution.
+- Do not treat a currency conversion or ETF listing as a change in the underlying investment; it is only a data-normalization step.
 - Do not use a high score as a guarantee of future performance.
 - If the supplied data is insufficient for a strong conclusion, say so and choose a cautious action.
 - The user is responsible for the final investment decision.
