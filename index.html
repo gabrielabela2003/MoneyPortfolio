@@ -251,6 +251,7 @@
   .ai-holdings table{min-width:620px;}
   .ai-badge{display:inline-block;padding:3px 7px;border:1px solid var(--rule);border-radius:4px;font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:600;}
   .ai-error{color:var(--loss);border-color:var(--loss);background:var(--loss-soft);}
+  .currency-note{font-size:11.5px;color:var(--ink-soft);margin-top:8px;line-height:1.45;}
   @media(max-width:640px){.ai-grid{grid-template-columns:1fr;}}
 
 </style>
@@ -291,7 +292,7 @@
     <div class="add-row">
       <input id="newTicker" placeholder="TICKER (e.g. AAPL)" maxlength="8">
       <input id="newShares" placeholder="Shares" type="number" step="any" min="0">
-      <input id="newCost" placeholder="Avg. cost / share ($)" type="number" step="any" min="0">
+      <input id="newCost" placeholder="Avg. cost / share" type="number" step="any" min="0">
       <button class="btn" id="addHoldingBtn">Add holding</button>
     </div>
   </section>
@@ -357,6 +358,7 @@
         style="font-family:'IBM Plex Mono',monospace;font-size:13px;padding:9px 10px;border:1px solid var(--rule);border-radius:4px;background:var(--paper-raised);color:var(--ink);width:120px;">
       <button class="btn" id="analyzeBtn">Analyze portfolio</button>
     </div>
+    <div class="currency-note">Portfolio totals and allocations are calculated in EUR. US-listed assets are converted using Finnhub's EUR/USD rate; VUAA is mapped to its EUR Borsa Italiana listing (VUAA.MI).</div>
 
     <div id="aiResult" class="empty">
       Click <strong>Analyze portfolio</strong> to get a portfolio-aware AI analysis.
@@ -390,7 +392,7 @@
   const LS_HOLDINGS = 'ledger_holdings';
   const LS_WATCHLIST = 'ledger_watchlist';
   const LS_API_KEY = 'ledger_finnhub_key';
-  const LS_HISTORY = 'ledger_history';
+  const LS_HISTORY = 'ledger_history_eur_v2';
   const LS_META = 'ledger_meta'; // cached name/sector per ticker
   const LS_THRESHOLD = 'ledger_threshold';
 
@@ -400,7 +402,34 @@
   let history = JSON.parse(localStorage.getItem(LS_HISTORY) || '[]');
   let meta = JSON.parse(localStorage.getItem(LS_META) || '{}');
   let threshold = parseFloat(localStorage.getItem(LS_THRESHOLD) || '30');
-  let quotes = {}; // ticker -> {price, prevClose}
+  let quotes = {}; // display ticker -> {price, prevClose}
+  let fxRates = {EUR:1, USD:null}; // native currency -> EUR conversion
+  const BASE_CURRENCY = 'EUR';
+  const ASSET_INFO = {
+    VUAA: {marketSymbol:'VUAA.MI', currency:'EUR', name:'Vanguard S&P 500 UCITS ETF', sector:'US Large Cap / Broad Market ETF'}
+  };
+
+  function getAssetInfo(ticker){
+    return ASSET_INFO[ticker] || {marketSymbol:ticker, currency:'USD', name:ticker, sector:'Unclassified'};
+  }
+  function toEUR(amount, currency){
+    if(amount===null || amount===undefined || !Number.isFinite(Number(amount))) return null;
+    if(currency==='EUR') return Number(amount);
+    const rate = fxRates[currency];
+    if(!rate || !Number.isFinite(rate)) return null;
+    return Number(amount) / rate;
+  }
+  function holdingValuation(h){
+    const info = getAssetInfo(h.ticker);
+    const p = getPrice(h);
+    const nativePrice = p.price!==null ? p.price : Number(h.costBasis);
+    const nativeValue = Number.isFinite(nativePrice) ? nativePrice*h.shares : null;
+    const valueEUR = toEUR(nativeValue, info.currency);
+    const prevNative = p.prevClose!==null ? p.prevClose : Number(h.costBasis);
+    const prevEUR = toEUR(prevNative*h.shares, info.currency);
+    const costEUR = toEUR(Number(h.costBasis)*h.shares, info.currency);
+    return {info, p, nativePrice, nativeValue, valueEUR, prevEUR, costEUR};
+  }
   let chart = null;
   let donutChart = null;
   let perfChart = null;
@@ -409,6 +438,8 @@
 
   const $ = id => document.getElementById(id);
   const fmt$ = n => (n<0?'-$':'$') + Math.abs(n).toLocaleString(undefined,{minimumFractionDigits:2, maximumFractionDigits:2});
+  const fmtEUR = n => (n<0?'−€':'€') + Math.abs(n).toLocaleString(undefined,{minimumFractionDigits:2, maximumFractionDigits:2});
+  const fmtNative = (n,currency) => currency==='EUR' ? fmtEUR(n) : fmt$(n);
   const fmtPct = n => (n>0?'+':'') + n.toFixed(2) + '%';
 
   function save(){
@@ -468,18 +499,34 @@
 
   // ---------- Fetching ----------
   async function fetchQuote(ticker){
-    const url = `https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(ticker)}&token=${apiKey}`;
+    const info = getAssetInfo(ticker);
+    const symbol = info.marketSymbol;
+    const url = `https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(symbol)}&token=${apiKey}`;
     const res = await fetch(url);
     if(!res.ok) throw new Error('quote failed');
     const d = await res.json();
-    return {price: d.c, prevClose: d.pc};
+    if(!Number.isFinite(Number(d.c)) || Number(d.c) <= 0) throw new Error('no quote');
+    return {price: Number(d.c), prevClose: Number.isFinite(Number(d.pc)) ? Number(d.pc) : null};
   }
   async function fetchProfile(ticker){
-    const url = `https://finnhub.io/api/v1/stock/profile2?symbol=${encodeURIComponent(ticker)}&token=${apiKey}`;
+    const info = getAssetInfo(ticker);
+    if(ASSET_INFO[ticker]) return {name:info.name, sector:info.sector};
+    const url = `https://finnhub.io/api/v1/stock/profile2?symbol=${encodeURIComponent(info.marketSymbol)}&token=${apiKey}`;
     const res = await fetch(url);
     if(!res.ok) throw new Error('profile failed');
     const d = await res.json();
     return {name: d.name || ticker, sector: d.finnhubIndustry || 'Unclassified'};
+  }
+  async function fetchFXRates(){
+    fxRates.EUR = 1;
+    const url = `https://finnhub.io/api/v1/forex/rates?base=EUR&token=${apiKey}`;
+    const res = await fetch(url);
+    if(!res.ok) throw new Error('FX rates failed');
+    const d = await res.json();
+    const usd = Number(d?.quote?.USD ?? d?.rates?.USD);
+    if(!Number.isFinite(usd) || usd <= 0) throw new Error('EUR/USD rate unavailable');
+    fxRates.USD = usd;
+    return usd;
   }
 
   async function refreshAll(){
@@ -497,30 +544,34 @@
     $('refreshState').textContent = 'refreshing…';
     $('apiHint').textContent = '';
     try{
+      const needsUSD = tickers.some(t => getAssetInfo(t).currency === 'USD');
+      if(needsUSD) await fetchFXRates();
+
       await Promise.all(tickers.map(async t => {
         try{
           const q = await fetchQuote(t);
           quotes[t] = q;
-          if(!meta[t]){
+          if(ASSET_INFO[t]){
+            meta[t] = {name:ASSET_INFO[t].name, sector:ASSET_INFO[t].sector};
+          } else if(!meta[t]){
             try{ meta[t] = await fetchProfile(t); } catch(e){ meta[t] = {name:t, sector:'Unclassified'}; }
           }
         } catch(e){ /* skip ticker on failure */ }
       }));
       save();
       $('lastUpdated').textContent = 'updated ' + new Date().toLocaleTimeString();
-      $('refreshState').textContent = 'auto-refresh: on';
+      $('refreshState').textContent = needsUSD ? `auto-refresh: on · EUR/USD ${fxRates.USD.toFixed(4)}` : 'auto-refresh: on';
       logHistorySnapshot();
     } catch(e){
-      $('refreshState').textContent = 'refresh failed';
+      $('refreshState').textContent = 'refresh failed · ' + e.message;
     }
     renderHoldings(); renderWatchlist(); renderHero(); renderAllocation(); renderDiversify(); renderPerf(); renderChart();
   }
 
   function logHistorySnapshot(){
-    const total = holdings.reduce((sum,h)=>{
-      const p = getPrice(h);
-      return sum + (p.price!==null ? p.price*h.shares : 0);
-    },0);
+    const valuations = holdings.map(holdingValuation);
+    if(valuations.some(v=>v.valueEUR===null)) return;
+    const total = valuations.reduce((sum,v)=>sum+v.valueEUR,0);
     if(total<=0) return;
     const today = new Date().toISOString().slice(0,10);
     const last = history[history.length-1];
@@ -572,25 +623,26 @@
       return;
     }
     $('totalValue').classList.remove('placeholder-amt');
-    let total=0, prevTotal=0, costTotal=0;
-    holdings.forEach(h=>{
-      const p = getPrice(h);
-      const price = p.price!==null ? p.price : h.costBasis;
-      const prev = p.prevClose!==null ? p.prevClose : h.costBasis;
-      total += price*h.shares;
-      prevTotal += prev*h.shares;
-      costTotal += h.costBasis*h.shares;
-    });
-    $('totalValue').textContent = fmt$(total);
+    const vals = holdings.map(holdingValuation);
+    if(vals.some(v=>v.valueEUR===null)){
+      $('totalValue').textContent = 'Data unavailable';
+      $('dayChange').textContent='—'; $('totalGain').textContent='—';
+      $('holdingCount').textContent = holdings.length;
+      return;
+    }
+    const total = vals.reduce((s,v)=>s+v.valueEUR,0);
+    const prevTotal = vals.reduce((s,v)=>s+(v.prevEUR ?? v.valueEUR),0);
+    const costTotal = vals.reduce((s,v)=>s+(v.costEUR ?? 0),0);
+    $('totalValue').textContent = fmtEUR(total);
     const dayDelta = total-prevTotal;
     const dayPct = prevTotal? (dayDelta/prevTotal*100):0;
     const dEl = $('dayChange');
-    dEl.textContent = `${fmt$(dayDelta)} (${fmtPct(dayPct)})`;
+    dEl.textContent = `${fmtEUR(dayDelta)} (${fmtPct(dayPct)})`;
     dEl.className = 'v ' + (dayDelta>=0?'pos':'neg');
     const gainDelta = total-costTotal;
     const gainPct = costTotal? (gainDelta/costTotal*100):0;
     const gEl = $('totalGain');
-    gEl.textContent = `${fmt$(gainDelta)} (${fmtPct(gainPct)})`;
+    gEl.textContent = `${fmtEUR(gainDelta)} (${fmtPct(gainPct)})`;
     gEl.className = 'v ' + (gainDelta>=0?'pos':'neg');
     $('holdingCount').textContent = holdings.length;
   }
@@ -601,27 +653,26 @@
       wrap.innerHTML = '<div class="empty">No holdings yet — add your first one below.</div>';
       return;
     }
-    let totalVal = holdings.reduce((s,h)=>{
-      const p=getPrice(h); return s+((p.price!==null?p.price:h.costBasis)*h.shares);
-    },0);
-    const rows = holdings.map(h=>{
-      const p = getPrice(h);
-      const price = p.price;
-      const value = (price!==null?price:h.costBasis)*h.shares;
+    const vals = holdings.map(holdingValuation);
+    const totalVal = vals.every(v=>v.valueEUR!==null) ? vals.reduce((s,v)=>s+v.valueEUR,0) : 0;
+    const rows = holdings.map((h,i)=>{
+      const v = vals[i];
+      const price = v.p.price;
+      const info = v.info;
       const gain = price!==null ? (price-h.costBasis)*h.shares : 0;
       const gainPct = price!==null && h.costBasis ? ((price-h.costBasis)/h.costBasis*100) : 0;
-      const alloc = totalVal? (value/totalVal*100):0;
-      const name = (meta[h.ticker]||{}).name || '';
+      const alloc = totalVal && v.valueEUR!==null ? (v.valueEUR/totalVal*100):0;
+      const name = (meta[h.ticker]||{}).name || info.name || '';
       const priceCell = price!==null
-        ? `${fmt$(price)}${!p.live?'<span class="manual-tag">manual</span>':''}`
+        ? `${fmtNative(price,info.currency)}${!v.p.live?'<span class="manual-tag">manual</span>':''}`
         : `<input type="number" step="any" min="0" class="manual-price-input" data-t="${h.ticker}" placeholder="Set price">`;
       return `<tr>
         <td class="tick">${h.ticker}${name?`<span class="row-name">${escapeHtml(name)}</span>`:''}</td>
         <td class="num">${h.shares}</td>
         <td class="num">${priceCell}</td>
-        <td class="num">${price!==null?fmt$(value):'—'}</td>
-        <td class="num ${gain>=0?'pos':'neg'}">${price!==null?fmt$(gain)+' ('+fmtPct(gainPct)+')':'—'}</td>
-        <td class="num">${price!==null?alloc.toFixed(1)+'%':'—'}</td>
+        <td class="num">${v.valueEUR!==null?fmtEUR(v.valueEUR):'—'}</td>
+        <td class="num ${gain>=0?'pos':'neg'}">${price!==null?fmtNative(gain,info.currency)+' ('+fmtPct(gainPct)+')':'—'}</td>
+        <td class="num">${v.valueEUR!==null?alloc.toFixed(1)+'%':'—'}</td>
         <td class="num row-actions">
           <button class="del-btn" data-edit="${h.ticker}" aria-label="Edit ${h.ticker}">edit</button>
           <button class="del-btn" data-t="${h.ticker}" aria-label="Remove ${h.ticker}">remove</button>
@@ -630,7 +681,7 @@
     }).join('');
     wrap.innerHTML = `<table>
       <thead><tr>
-        <th>Ticker</th><th class="num">Shares</th><th class="num">Price</th><th class="num">Value</th>
+        <th>Ticker</th><th class="num">Shares</th><th class="num">Price</th><th class="num">Value (EUR)</th>
         <th class="num">Gain/loss</th><th class="num">Alloc.</th><th></th>
       </tr></thead>
       <tbody>${rows}</tbody>
@@ -650,7 +701,8 @@
     }
     wrap.innerHTML = watchlist.map(t=>{
       const q = quotes[t];
-      const price = q ? fmt$(q.price) : '—';
+      const info = getAssetInfo(t);
+      const price = q ? fmtNative(q.price, info.currency) : '—';
       let pct=0, pctStr='—';
       if(q && q.prevClose){ pct = (q.price-q.prevClose)/q.prevClose*100; pctStr = fmtPct(pct); }
       return `<div class="watch-item">
@@ -675,9 +727,10 @@
     const bySector = {};
     let total=0;
     holdings.forEach(h=>{
-      const p=getPrice(h);
-      const value = (p.price!==null?p.price:h.costBasis)*h.shares;
-      const sector = (meta[h.ticker]||{}).sector || 'Unclassified';
+      const v=holdingValuation(h);
+      if(v.valueEUR===null) return;
+      const value = v.valueEUR;
+      const sector = (meta[h.ticker]||{}).sector || v.info.sector || 'Unclassified';
       bySector[sector] = (bySector[sector]||0)+value;
       total+=value;
     });
@@ -721,10 +774,10 @@
     }
     let total=0;
     const perTicker = holdings.map(h=>{
-      const p = getPrice(h);
-      const value = (p.price!==null?p.price:h.costBasis)*h.shares;
+      const v = holdingValuation(h);
+      const value = v.valueEUR===null ? 0 : v.valueEUR;
       total += value;
-      return {ticker:h.ticker, name:(meta[h.ticker]||{}).name||h.ticker, value};
+      return {ticker:h.ticker, name:(meta[h.ticker]||{}).name||v.info.name||h.ticker, value};
     });
     const bySector = {};
     perTicker.forEach((row,i)=>{
@@ -823,48 +876,57 @@
   const AI_ENDPOINT = 'https://money-portfolio-topaz.vercel.app/api/analyze';
 
   function buildAIData(){
-    const totalValue = holdings.reduce((sum,h)=>{
-      const p=getPrice(h);
-      return sum + ((p.price!==null?p.price:h.costBasis)*h.shares);
-    },0);
+    const valuations = holdings.map(holdingValuation);
+    const totalValue = valuations.every(v=>v.valueEUR!==null)
+      ? valuations.reduce((sum,v)=>sum+v.valueEUR,0)
+      : null;
 
-    const portfolio = holdings.map(h=>{
-      const p=getPrice(h);
-      const price = p.price!==null ? p.price : h.costBasis;
-      const value = price*h.shares;
+    const portfolio = holdings.map((h,i)=>{
+      const v=valuations[i];
+      const price = v.nativePrice;
+      const value = v.valueEUR;
+      const allocation = totalValue && value!==null ? (value/totalValue*100) : null;
+      const gainNative = price!==null ? (price-h.costBasis)*h.shares : null;
+      const gainEUR = toEUR(gainNative, v.info.currency);
       return {
         ticker:h.ticker,
-        name:(meta[h.ticker]||{}).name||h.ticker,
-        sector:(meta[h.ticker]||{}).sector||'Unclassified',
+        marketSymbol:v.info.marketSymbol,
+        currency:v.info.currency,
+        name:(meta[h.ticker]||{}).name||v.info.name||h.ticker,
+        sector:(meta[h.ticker]||{}).sector||v.info.sector||'Unclassified',
         shares:h.shares,
         costBasis:Number(h.costBasis),
         price:Number(price),
-        value:Number(value),
-        allocation:Number(totalValue ? (value/totalValue*100) : 0),
-        gainLoss:Number((price-h.costBasis)*h.shares),
-        gainLossPct:Number(h.costBasis ? ((price-h.costBasis)/h.costBasis*100) : 0)
+        valueEUR:value===null?null:Number(value),
+        allocation:allocation===null?null:Number(allocation),
+        gainLossEUR:gainEUR===null?null:Number(gainEUR),
+        gainLossPct:price!==null && h.costBasis ? Number(((price-h.costBasis)/h.costBasis*100)) : null
       };
     });
 
     const watch = watchlist.map(t=>{
       const q=quotes[t];
+      const info=getAssetInfo(t);
       return {
         ticker:t,
+        marketSymbol:info.marketSymbol,
+        currency:info.currency,
         price:q ? Number(q.price) : null,
         dayChangePct:q && q.prevClose ? Number(((q.price-q.prevClose)/q.prevClose*100)) : null,
-        name:(meta[t]||{}).name||t,
-        sector:(meta[t]||{}).sector||'Unclassified'
+        name:(meta[t]||{}).name||info.name||t,
+        sector:(meta[t]||{}).sector||info.sector||'Unclassified'
       };
     });
 
     return {
       currency:'EUR',
+      fx:{EUR:1, USD:fxRates.USD},
       monthlyContribution:Number(parseFloat($('monthlyContribution').value)||0),
       concentrationThreshold:Number(threshold),
-      totalPortfolioValue:Number(totalValue),
+      totalPortfolioValue:totalValue===null?null:Number(totalValue),
       holdings:portfolio,
       watchlist:watch,
-      note:'Prices and sectors are supplied by the Ledger client. Do not assume missing market/fundamental/news data.'
+      note:'All portfolio allocations and total values are normalized to EUR. VUAA is mapped to VUAA.MI and treated as EUR-listed. Do not assume missing market/fundamental/news data.'
     };
   }
 
