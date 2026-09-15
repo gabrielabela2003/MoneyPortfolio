@@ -240,6 +240,19 @@
     .hero-value .amount{font-size:38px;}
     th:nth-child(4), td:nth-child(4){display:none;}
   }
+
+  .ai-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:14px;}
+  .ai-card{border:1px solid var(--rule);border-radius:6px;background:var(--paper-raised);padding:14px;}
+  .ai-card .ai-label{font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.04em;margin-bottom:5px;}
+  .ai-card .ai-value{font-family:'IBM Plex Mono',monospace;font-size:18px;font-weight:600;}
+  .ai-reason{margin-top:14px;padding:14px;border-left:3px solid var(--gold);background:#FBF3E4;font-size:13.5px;line-height:1.55;}
+  .ai-list{margin:14px 0 0;padding-left:18px;font-size:13.5px;line-height:1.55;}
+  .ai-holdings{margin-top:14px;width:100%;overflow:auto;}
+  .ai-holdings table{min-width:620px;}
+  .ai-badge{display:inline-block;padding:3px 7px;border:1px solid var(--rule);border-radius:4px;font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:600;}
+  .ai-error{color:var(--loss);border-color:var(--loss);background:var(--loss-soft);}
+  @media(max-width:640px){.ai-grid{grid-template-columns:1fr;}}
+
 </style>
 </head>
 <body>
@@ -329,9 +342,30 @@
     </div>
   </section>
 
+
+  <section class="section" id="aiSection">
+    <div class="section-head">
+      <h2>AI Portfolio Intelligence</h2>
+      <span class="hint" id="aiStatus">Ready</span>
+    </div>
+
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:16px;">
+      <label for="monthlyContribution" style="font-size:13px;color:var(--ink-soft);">
+        Monthly contribution €
+      </label>
+      <input id="monthlyContribution" type="number" min="0" step="10" value="100"
+        style="font-family:'IBM Plex Mono',monospace;font-size:13px;padding:9px 10px;border:1px solid var(--rule);border-radius:4px;background:var(--paper-raised);color:var(--ink);width:120px;">
+      <button class="btn" id="analyzeBtn">Analyze portfolio</button>
+    </div>
+
+    <div id="aiResult" class="empty">
+      Click <strong>Analyze portfolio</strong> to get a portfolio-aware AI analysis.
+    </div>
+  </section>
+
   <p class="disclaimer">
-    Ledger shows the data you enter and current market prices — it is a personal tracking tool, not investment advice.
-    It does not predict future prices and doesn't recommend what to buy or sell. Decide your own trades, or talk to a
+    Ledger shows the data you enter and current market prices. Its AI feature provides decision-support analysis based on the data supplied to it; it is not investment advice.
+    AI outputs can be wrong and do not guarantee future returns. Decide your own trades, or talk to a
     licensed financial adviser for guidance tailored to you.
   </p>
 
@@ -783,6 +817,133 @@
   function escapeHtml(s){
     return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   }
+
+
+  // ---------- AI Portfolio Intelligence ----------
+  const AI_ENDPOINT = 'https://money-portfolio-topaz.vercel.app/api/analyze';
+
+  function buildAIData(){
+    const totalValue = holdings.reduce((sum,h)=>{
+      const p=getPrice(h);
+      return sum + ((p.price!==null?p.price:h.costBasis)*h.shares);
+    },0);
+
+    const portfolio = holdings.map(h=>{
+      const p=getPrice(h);
+      const price = p.price!==null ? p.price : h.costBasis;
+      const value = price*h.shares;
+      return {
+        ticker:h.ticker,
+        name:(meta[h.ticker]||{}).name||h.ticker,
+        sector:(meta[h.ticker]||{}).sector||'Unclassified',
+        shares:h.shares,
+        costBasis:Number(h.costBasis),
+        price:Number(price),
+        value:Number(value),
+        allocation:Number(totalValue ? (value/totalValue*100) : 0),
+        gainLoss:Number((price-h.costBasis)*h.shares),
+        gainLossPct:Number(h.costBasis ? ((price-h.costBasis)/h.costBasis*100) : 0)
+      };
+    });
+
+    const watch = watchlist.map(t=>{
+      const q=quotes[t];
+      return {
+        ticker:t,
+        price:q ? Number(q.price) : null,
+        dayChangePct:q && q.prevClose ? Number(((q.price-q.prevClose)/q.prevClose*100)) : null,
+        name:(meta[t]||{}).name||t,
+        sector:(meta[t]||{}).sector||'Unclassified'
+      };
+    });
+
+    return {
+      currency:'EUR',
+      monthlyContribution:Number(parseFloat($('monthlyContribution').value)||0),
+      concentrationThreshold:Number(threshold),
+      totalPortfolioValue:Number(totalValue),
+      holdings:portfolio,
+      watchlist:watch,
+      note:'Prices and sectors are supplied by the Ledger client. Do not assume missing market/fundamental/news data.'
+    };
+  }
+
+  function escapeAI(s){
+    return escapeHtml(String(s ?? ''));
+  }
+
+  function renderAIResult(result){
+    const action = result.monthlyDecision || 'REVIEW';
+    const amount = result.recommendedAmount ?? 0;
+    const score = result.portfolioScore ?? '—';
+    const asset = result.recommendedTicker || result.ticker || '—';
+
+    const holdings = Array.isArray(result.holdings) ? result.holdings : [];
+    const risks = Array.isArray(result.risks) ? result.risks : [];
+
+    $('aiResult').className = '';
+    $('aiResult').innerHTML = `
+      <div class="ai-grid">
+        <div class="ai-card"><div class="ai-label">Monthly decision</div><div class="ai-value">${escapeAI(action)}</div></div>
+        <div class="ai-card"><div class="ai-label">Suggested amount</div><div class="ai-value">€${Number(amount||0).toFixed(2)}</div></div>
+        <div class="ai-card"><div class="ai-label">Portfolio score</div><div class="ai-value">${escapeAI(score)}/100</div></div>
+        <div class="ai-card"><div class="ai-label">Suggested asset</div><div class="ai-value">${escapeAI(asset)}</div></div>
+      </div>
+      <div class="ai-reason"><strong>Reasoning:</strong> ${escapeAI(result.reasoning || 'No reasoning returned.')}</div>
+      ${holdings.length ? `
+        <div class="ai-holdings">
+          <table>
+            <thead><tr><th>Ticker</th><th class="num">Score</th><th>Action</th><th>Reason</th></tr></thead>
+            <tbody>${holdings.map(h=>`
+              <tr>
+                <td class="tick">${escapeAI(h.ticker)}</td>
+                <td class="num">${escapeAI(h.score)}/100</td>
+                <td><span class="ai-badge">${escapeAI(h.action)}</span></td>
+                <td>${escapeAI(h.reason)}</td>
+              </tr>`).join('')}</tbody>
+          </table>
+        </div>` : ''}
+      ${risks.length ? `<ul class="ai-list">${risks.map(r=>`<li>${escapeAI(r)}</li>`).join('')}</ul>` : ''}
+      <div style="margin-top:14px;font-size:11.5px;color:var(--ink-soft);">
+        AI analysis is decision support based on the data supplied to it; it is not a guarantee of returns or a substitute for professional financial advice.
+      </div>
+    `;
+  }
+
+  async function analyzePortfolio(){
+    const btn=$('analyzeBtn');
+    const status=$('aiStatus');
+    const result=$('aiResult');
+
+    btn.disabled=true;
+    btn.textContent='Analyzing…';
+    status.textContent='sending portfolio data…';
+    result.className='empty';
+    result.textContent='Analyzing your current portfolio…';
+
+    try{
+      const res=await fetch(AI_ENDPOINT,{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify(buildAIData())
+      });
+
+      const data=await res.json();
+      if(!res.ok) throw new Error(data.error || 'AI request failed');
+
+      renderAIResult(data);
+      status.textContent='analysis updated';
+    }catch(e){
+      result.className='empty ai-error';
+      result.textContent='AI analysis failed: ' + e.message;
+      status.textContent='error';
+    }finally{
+      btn.disabled=false;
+      btn.textContent='Analyze portfolio';
+    }
+  }
+
+  $('analyzeBtn').onclick = analyzePortfolio;
 
   // ---------- Init ----------
   function init(){
