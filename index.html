@@ -386,8 +386,9 @@
       <span class="hint" id="oppStatus">Not scanned yet</span>
     </div>
     <div class="opp-controls">
+      <button class="btn" id="discoverOppBtn">Discover opportunities</button>
       <button class="btn" id="scanOppBtn">Scan opportunities</button>
-      <span class="opp-status">Only Revolut-confirmed instruments are included in the actual opportunity scan.</span>
+      <span class="opp-status">Discovery finds broader candidates; only Revolut-confirmed instruments enter the actual opportunity scan.</span>
     </div>
     <div id="revolutQueue"></div>
     <div id="opportunityWrap"><div class="empty">Run a scan to see Revolut-available assets that may complement your portfolio.</div></div>
@@ -427,6 +428,7 @@
   const LS_META = 'ledger_meta'; // cached name/sector per ticker
   const LS_THRESHOLD = 'ledger_threshold';
   const LS_REVOLUT = 'ledger_revolut_confirmed_v2';
+  const LS_DISCOVERY = 'ledger_dynamic_discovery_v1';
 
   let holdings = JSON.parse(localStorage.getItem(LS_HOLDINGS) || '[]');
   let watchlist = JSON.parse(localStorage.getItem(LS_WATCHLIST) || '[]');
@@ -435,6 +437,7 @@
   let meta = JSON.parse(localStorage.getItem(LS_META) || '{}');
   let threshold = parseFloat(localStorage.getItem(LS_THRESHOLD) || '30');
   let revolutConfirmed = JSON.parse(localStorage.getItem(LS_REVOLUT) || '{}');
+  let discoveredUniverse = JSON.parse(localStorage.getItem(LS_DISCOVERY) || '{}');
   let quotes = {}; // display ticker -> {price, prevClose}
   let fxRates = {EUR:1, USD:null}; // native currency -> EUR conversion
   const BASE_CURRENCY = 'EUR';
@@ -485,13 +488,20 @@
       return;
     }
     wrap.innerHTML=`<div class="candidate-note" style="margin:14px 0 8px;"><strong>Revolut verification queue:</strong> these instruments are <em>not</em> included in the opportunity scan yet. Check the exact instrument in your Revolut Invest app, then confirm it here.</div>
-      <div class="opp-grid"><table><thead><tr><th>Ticker</th><th>Instrument</th><th>Verification</th><th></th></tr></thead><tbody>
-      ${pending.map(([ticker,info])=>`<tr><td class="tick">${escapeHtml(ticker)}</td><td>${escapeHtml(info.name)}</td><td><span class="opp-badge">VERIFY IN REVOLUT</span></td><td><button class="btn ghost queue-confirm" data-ticker="${escapeHtml(ticker)}">Confirm Revolut</button></td></tr>`).join('')}
+      <div class="opp-grid"><table><thead><tr><th>Ticker</th><th>Instrument</th><th>Source</th><th>Verification</th><th></th></tr></thead><tbody>
+      ${pending.map(([ticker,info])=>`<tr><td class="tick">${escapeHtml(ticker)}</td><td>${escapeHtml(info.name)}${info.whyItWasDiscovered?`<div class="candidate-note">${escapeHtml(info.whyItWasDiscovered)}</div>`:''}</td><td><span class="opp-badge">${info.discovery?'AI DISCOVERY':'CONFIGURED'}</span></td><td><span class="opp-badge">VERIFY IN REVOLUT</span></td><td><button class="btn ghost queue-confirm" data-ticker="${escapeHtml(ticker)}">Confirm Revolut</button>${info.discovery?`<button class="btn ghost queue-remove" data-ticker="${escapeHtml(ticker)}">Remove</button>`:''}</td></tr>`).join('')}
       </tbody></table></div>`;
     wrap.querySelectorAll('.queue-confirm').forEach(btn=>btn.onclick=()=>{
       const t=btn.dataset.ticker;
       setRevolutConfirmed(t,true);
       scanOpportunities();
+    });
+    wrap.querySelectorAll('.queue-remove').forEach(btn=>btn.onclick=()=>{
+      const t=btn.dataset.ticker;
+      delete OPPORTUNITY_UNIVERSE[t];
+      delete discoveredUniverse[t];
+      localStorage.setItem(LS_DISCOVERY,JSON.stringify(discoveredUniverse));
+      renderRevolutQueue();
     });
   }
   function getMarketSymbols(ticker){
@@ -1012,6 +1022,7 @@
   // ---------- AI Portfolio Intelligence ----------
   const AI_ENDPOINT = 'https://money-portfolio-topaz.vercel.app/api/analyze';
   const OPPORTUNITY_ENDPOINT = 'https://money-portfolio-topaz.vercel.app/api/opportunities';
+  const DISCOVERY_ENDPOINT = 'https://money-portfolio-topaz.vercel.app/api/discover';
 
   // Phase 2 starts with a deliberately small, transparent universe.
   // IMPORTANT: Revolut availability is never assumed for new candidates.
@@ -1035,6 +1046,10 @@
     VAGF:{name:'Vanguard Global Aggregate Bond UCITS ETF EUR Hedged Accumulating',sector:'Global Bond ETF',assetType:'Bond ETF',exposure:'Global investment-grade and government bonds; EUR-hedged',broker:'Revolut',availability:'verify_in_app',marketSymbols:['VAGF.MI','VAGF.DE']},
     IGLN:{name:'iShares Physical Gold ETC',sector:'Gold ETP',assetType:'Commodity ETP',exposure:'Physical gold exposure',broker:'Revolut',availability:'verify_in_app',marketSymbols:['IGLN.MI','IGLN.DE']}
   };
+
+  // Dynamic discoveries are persisted locally so the universe can grow over time.
+  // They remain unconfirmed until the user checks the exact instrument in Revolut.
+  Object.assign(OPPORTUNITY_UNIVERSE, discoveredUniverse || {});
 
   // Candidate metadata is deliberately shared between existing holdings, watchlist
   // assets and scanner assets. "source" is provenance only and MUST NOT influence
@@ -1263,9 +1278,10 @@
   }
 
   async function fetchFundamentals(ticker){
-    const stockTickers = new Set(['AAPL','MSFT','AVGO','NVDA']);
-    if(!stockTickers.has(ticker)) return null;
-    const url=`https://finnhub.io/api/v1/stock/metric?symbol=${encodeURIComponent(ticker)}&metric=all&token=${apiKey}`;
+    const base=OPPORTUNITY_UNIVERSE[ticker]||STOCK_DEFAULTS[ticker]||{};
+    if(base.assetType!=='Individual stock') return null;
+    const symbol=(getMarketSymbols(ticker)[0]||ticker).split('.')[0];
+    const url=`https://finnhub.io/api/v1/stock/metric?symbol=${encodeURIComponent(symbol)}&metric=all&token=${apiKey}`;
     const res=await fetch(url); if(!res.ok) throw new Error('fundamentals failed');
     const d=await res.json(); const m=d?.metric||{};
     const pick=(...keys)=>{for(const k of keys){const v=Number(m[k]);if(Number.isFinite(v))return v;}return null;};
@@ -1374,7 +1390,45 @@
     wrap.querySelectorAll('.opp-unconfirm').forEach(btn=>btn.onclick=()=>{setRevolutConfirmed(btn.dataset.ticker,false);scanOpportunities();});
   }
 
-  async function scanOpportunities(){
+  function buildDiscoveryInput(){
+    const valuations=holdings.map(holdingValuation);
+    const totalValue=valuations.every(v=>v.valueEUR!==null)?valuations.reduce((sum,v)=>sum+v.valueEUR,0):null;
+    const portfolio=holdings.map((h,i)=>{
+      const v=valuations[i]; const value=v.valueEUR;
+      return {ticker:h.ticker,name:(meta[h.ticker]||{}).name||v.info.name||h.ticker,sector:(meta[h.ticker]||{}).sector||v.info.sector||'Unclassified',shares:h.shares,valueEUR:value===null?null:Number(value),allocationPct:totalValue&&value!==null?Number(value/totalValue*100):null};
+    });
+    return {holdings:portfolio,existingTickers:Object.keys(OPPORTUNITY_UNIVERSE),confirmedTickers:Object.keys(OPPORTUNITY_UNIVERSE).filter(isRevolutConfirmed),monthlyContribution:Number(parseFloat($('monthlyContribution').value)||0)};
+  }
+
+  function addDiscoveredCandidates(candidates){
+    let added=0;
+    for(const c of (Array.isArray(candidates)?candidates:[])){
+      const t=String(c.ticker||'').toUpperCase().trim();
+      if(!t || OPPORTUNITY_UNIVERSE[t] || !c.marketSymbols?.length) continue;
+      OPPORTUNITY_UNIVERSE[t]={name:c.name,sector:c.sector||'Unclassified',assetType:c.assetType||'Individual stock',exposure:c.exposure||'Not classified from supplied discovery data',broker:'Revolut',availability:'verify_in_app',marketSymbols:c.marketSymbols,discovery:true,whyItWasDiscovered:c.whyItWasDiscovered||''};
+      discoveredUniverse[t]=OPPORTUNITY_UNIVERSE[t];
+      added++;
+    }
+    localStorage.setItem(LS_DISCOVERY,JSON.stringify(discoveredUniverse));
+    return added;
+  }
+
+  async function discoverOpportunities(){
+    const btn=$('discoverOppBtn'),status=$('oppStatus');
+    btn.disabled=true;btn.textContent='Discovering…';status.textContent='searching current market universe…';
+    try{
+      const res=await fetch(DISCOVERY_ENDPOINT,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(buildDiscoveryInput())});
+      const data=await res.json(); if(!res.ok) throw new Error(data.error||'Dynamic discovery failed');
+      const added=addDiscoveredCandidates(data.candidates||[]);
+      renderRevolutQueue();
+      $('opportunityWrap').className='empty';
+      $('opportunityWrap').innerHTML=`<strong>Discovery complete.</strong> ${added} new research candidate${added===1?'':'s'} added to the Revolut verification queue. They are not part of the opportunity scan until you confirm them in Revolut.${data.summary?`<div class="candidate-note" style="margin-top:8px;">${escapeAI(data.summary)}</div>`:''}`;
+      status.textContent=`discovery updated · ${added} new candidates · Revolut verification required`;
+    }catch(e){$('opportunityWrap').className='empty ai-error';$('opportunityWrap').textContent='Dynamic discovery failed: '+e.message;status.textContent='error';}
+    finally{btn.disabled=false;btn.textContent='Discover opportunities';}
+  }
+
+    async function scanOpportunities(){
     const btn=$('scanOppBtn'),status=$('oppStatus'),wrap=$('opportunityWrap');
     btn.disabled=true;btn.textContent='Scanning…';status.textContent='loading live prices…';
     try{
@@ -1404,6 +1458,7 @@
   }
 
   renderRevolutQueue();
+  $('discoverOppBtn').onclick=discoverOpportunities;
 
   async function analyzePortfolio(){
     const btn=$('analyzeBtn');
