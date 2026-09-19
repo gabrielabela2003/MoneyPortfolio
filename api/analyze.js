@@ -82,6 +82,14 @@ B) PORTFOLIO-AWARE ACTIONS
 - Do not confuse diversification within an ETF with diversification of the user's whole portfolio.
 - If the best portfolio action is to avoid adding to every current holding, use WAIT or consider
   a supplied watchlist asset. Never invent a new ticker that was not supplied.
+- The user-supplied watchlist is an active candidate set, not background information. When one or
+  more watchlist assets are supplied, explicitly compare them with the existing holdings for the
+  monthly contribution decision. Use their supplied ticker, name, sector, price and dayChangePct
+  only; do not invent fundamentals, valuation, news, or other missing data.
+- A watchlist asset may be selected as recommendedTicker when its portfolio fit is better than
+  adding to an existing holding. If a watchlist candidate is selected, explain why it complements
+  the portfolio and mention any overlap or missing-data limitations. If none is suitable, it is valid
+  to recommend an existing holding or WAIT.
 
 C) MONTHLY CONTRIBUTION DECISION
 - Decide whether to INVEST, PARTIAL, or WAIT using the monthly contribution only AFTER assessing
