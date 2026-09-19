@@ -1146,10 +1146,10 @@
 
       ${candidates.length ? `
         <div style="margin-top:18px;font-size:13px;font-weight:600;">Fair candidate comparison</div>
-        <div class="candidate-note">Existing holdings, watchlist assets and Revolut-oriented UCITS/ETP candidates are compared together. Broker availability is shown separately and does not affect asset quality. New candidates marked “verify” must be confirmed in Revolut before investing.</div>
+        <div class="candidate-note">Existing holdings, watchlist assets and Revolut-oriented UCITS/ETP candidates are compared together. Broker availability is shown separately and does not affect asset quality. New candidates marked “verify” must be confirmed in Revolut before investing. “After full €X” shows the portfolio weight if the entire requested contribution (€X) were allocated to that candidate; it is not the AI’s final suggested amount.</div>
         <div class="candidate-grid">
           <table>
-            <thead><tr><th>Ticker</th><th>Source</th><th class="num">Asset score</th><th class="num">Portfolio fit</th><th class="num">Current wt.</th><th class="num">After €${Number(amount||0).toFixed(0)}</th><th>Action</th><th>Broker</th><th>Reason</th></tr></thead>
+            <thead><tr><th>Ticker</th><th>Source</th><th class="num">Asset score</th><th class="num">Portfolio fit</th><th class="num">Current wt.</th><th class="num">After full €${Number(monthlyContribution||0).toFixed(0)}</th><th>Action</th><th>Broker</th><th>Reason</th></tr></thead>
             <tbody>${candidates.map(c=>`
               <tr>
                 <td class="tick">${escapeAI(c.ticker)}</td>
