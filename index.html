@@ -568,6 +568,30 @@
   }
 
   // ---------- Fetching ----------
+  const MARKET_ENDPOINT = 'https://money-portfolio-topaz.vercel.app/api/market';
+
+  async function fetchSupplementalQuotes(tickers){
+    const symbols=[];
+    for(const t of tickers){
+      for(const sym of getMarketSymbols(t)){ if(!symbols.includes(sym)) symbols.push(sym); }
+    }
+    if(!symbols.length) return;
+    const res=await fetch(MARKET_ENDPOINT,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({symbols})});
+    if(!res.ok) throw new Error('supplemental market data failed');
+    const data=await res.json();
+    const rows=data?.quotes||{};
+    for(const t of tickers){
+      if(quotes[t]) continue;
+      for(const sym of getMarketSymbols(t)){
+        const q=rows[sym];
+        if(q && Number.isFinite(Number(q.price)) && Number(q.price)>0){
+          quotes[t]={price:Number(q.price),prevClose:Number.isFinite(Number(q.prevClose))?Number(q.prevClose):null,marketSymbol:sym,source:q.source||'Yahoo Finance',currency:q.currency||null,exchangeName:q.exchangeName||null};
+          break;
+        }
+      }
+    }
+  }
+
   async function fetchQuote(ticker){
     const symbols = getMarketSymbols(ticker);
     let lastError = null;
@@ -1259,6 +1283,8 @@
           news:[],
           researchStatus:'limited',
           marketSymbol:q?.marketSymbol||null,
+          quoteSource:q?.source||null,
+          exchangeName:q?.exchangeName||null,
           quoteAvailable:Boolean(q && Number.isFinite(Number(q.price)) && Number(q.price)>0),
           price:q?.price!=null?Number(q.price):null,
           prevClose:q?.prevClose!=null?Number(q.prevClose):null,
@@ -1305,8 +1331,8 @@
     wrap.className='';
     wrap.innerHTML=`<div class="opp-grid"><table>
       <thead><tr><th>Ticker</th><th class="num">Asset score</th><th class="num">Portfolio fit</th><th>Action</th><th>Live data</th><th>Reason</th><th></th></tr></thead>
-      <tbody>${rows.map(o=>{const r=researchByTicker[o.ticker]||{}; const f=r.fundamentals; const news=Array.isArray(r.news)?r.news:[]; const quote=r.quoteAvailable&&r.price!=null?`€${Number(r.price).toFixed(2)} · ${r.dayChangePct==null?'1D —':`1D ${r.dayChangePct>=0?'+':''}${Number(r.dayChangePct).toFixed(2)}%`}`:'Quote unavailable'; const detail=r.assetType==='Individual stock' ? `Fundamentals ${f?'available':'missing'} · News ${news.length}` : `ETF metadata ${r.metadataAvailable?'available':'missing'} · News ${news.length}`; const live=`${quote} · ${detail}`; const confirmed=isRevolutConfirmed(o.ticker); const symbol=r.marketSymbol; return `<tr>
-        <td class="tick">${escapeAI(o.ticker)}</td><td class="score">${escapeAI(o.assetScore)}/100</td><td class="score">${escapeAI(o.portfolioFit)}/100</td><td><span class="opp-badge">${escapeAI(confirmed?o.action:'WATCH')}</span></td><td>${escapeAI(live)}${symbol?`<div class="candidate-note">${escapeAI(symbol)}</div>`:''}</td><td class="opp-reason">${escapeAI(o.reason)}${confirmed?'':`<div class="candidate-note"><strong>Revolut:</strong> not confirmed. Verify this exact instrument in your Revolut Invest app before it can be actionable.</div>`}</td><td><button class="btn ghost opp-add" data-ticker="${escapeHtml(o.ticker)}">Add to watchlist</button>${confirmed?'':`<button class="btn ghost opp-confirm" data-ticker="${escapeHtml(o.ticker)}">Confirm Revolut</button>`}</td>
+      <tbody>${rows.map(o=>{const r=researchByTicker[o.ticker]||{}; const f=r.fundamentals; const news=Array.isArray(r.news)?r.news:[]; const quote=r.quoteAvailable&&r.price!=null?`€${Number(r.price).toFixed(2)} · ${r.dayChangePct==null?'1D —':`1D ${r.dayChangePct>=0?'+':''}${Number(r.dayChangePct).toFixed(2)}%`}`:'Quote unavailable'; const detail=r.assetType==='Individual stock' ? `Fundamentals ${f?'available':'missing'} · News ${news.length}` : `ETF metadata ${r.metadataAvailable?'available':'missing'} · News ${news.length}`; const live=`${quote} · ${detail}`; const source=r.quoteSource||'quote source unavailable'; const confirmed=isRevolutConfirmed(o.ticker); const symbol=r.marketSymbol; return `<tr>
+        <td class="tick">${escapeAI(o.ticker)}</td><td class="score">${escapeAI(o.assetScore)}/100</td><td class="score">${escapeAI(o.portfolioFit)}/100</td><td><span class="opp-badge">${escapeAI(confirmed?o.action:'WATCH')}</span></td><td>${escapeAI(live)}${symbol?`<div class="candidate-note">${escapeAI(symbol)} · ${escapeAI(source)}</div>`:''}</td><td class="opp-reason">${escapeAI(o.reason)}${confirmed?'':`<div class="candidate-note"><strong>Revolut:</strong> not confirmed. Verify this exact instrument in your Revolut Invest app before it can be actionable.</div>`}</td><td><button class="btn ghost opp-add" data-ticker="${escapeHtml(o.ticker)}">Add to watchlist</button>${confirmed?'':`<button class="btn ghost opp-confirm" data-ticker="${escapeHtml(o.ticker)}">Confirm Revolut</button>`}</td>
       </tr>`;}).join('')}</tbody></table></div>
       ${result.summary?`<div class="ai-reason"><strong>Research summary:</strong> ${escapeAI(result.summary)}</div>`:''}
       ${result.researchNotes?.length?`<div class="candidate-note"><strong>Data notes:</strong> ${result.researchNotes.map(escapeAI).join(' · ')}</div>`:''}
@@ -1322,6 +1348,8 @@
       if(!apiKey) throw new Error('Add your Finnhub API key in Settings first.');
       const candidates=Object.keys(OPPORTUNITY_UNIVERSE);
       for(const t of candidates){try{quotes[t]=await fetchQuote(t);}catch(e){quotes[t]=null;}}
+      status.textContent='loading exchange quotes…';
+      try{ await fetchSupplementalQuotes(candidates); }catch(e){}
       status.textContent='loading fundamentals and recent news…';
       const researchTickers=[...new Set([...holdings.map(h=>h.ticker),...candidates])];
       const research=await buildLiveResearch(researchTickers);
