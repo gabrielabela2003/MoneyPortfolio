@@ -425,6 +425,7 @@
   const LS_HISTORY = 'ledger_history_eur_v2';
   const LS_META = 'ledger_meta'; // cached name/sector per ticker
   const LS_THRESHOLD = 'ledger_threshold';
+  const LS_REVOLUT = 'ledger_revolut_confirmed';
 
   let holdings = JSON.parse(localStorage.getItem(LS_HOLDINGS) || '[]');
   let watchlist = JSON.parse(localStorage.getItem(LS_WATCHLIST) || '[]');
@@ -432,6 +433,7 @@
   let history = JSON.parse(localStorage.getItem(LS_HISTORY) || '[]');
   let meta = JSON.parse(localStorage.getItem(LS_META) || '{}');
   let threshold = parseFloat(localStorage.getItem(LS_THRESHOLD) || '30');
+  let revolutConfirmed = JSON.parse(localStorage.getItem(LS_REVOLUT) || '{}');
   let quotes = {}; // display ticker -> {price, prevClose}
   let fxRates = {EUR:1, USD:null}; // native currency -> EUR conversion
   const BASE_CURRENCY = 'EUR';
@@ -458,6 +460,22 @@
       if(!watchlist.includes('VUAA')) watchlist.push('VUAA');
     }
   })();
+
+  function isRevolutConfirmed(ticker){
+    return ticker === 'VUAA' || revolutConfirmed[ticker] === true;
+  }
+  function setRevolutConfirmed(ticker, value=true){
+    revolutConfirmed[ticker] = !!value;
+    localStorage.setItem(LS_REVOLUT, JSON.stringify(revolutConfirmed));
+    save();
+    renderWatchlist();
+  }
+  function getMarketSymbols(ticker){
+    const info = OPPORTUNITY_UNIVERSE[ticker];
+    if(info?.marketSymbols?.length) return info.marketSymbols;
+    if(ASSET_INFO[ticker]?.marketSymbol) return [ASSET_INFO[ticker].marketSymbol];
+    return [ticker];
+  }
 
   function getAssetInfo(ticker){
     return ASSET_INFO[ticker] || {marketSymbol:ticker, currency:'USD', name:ticker, sector:'Unclassified'};
@@ -498,6 +516,7 @@
     localStorage.setItem(LS_WATCHLIST, JSON.stringify(watchlist));
     localStorage.setItem(LS_HISTORY, JSON.stringify(history));
     localStorage.setItem(LS_META, JSON.stringify(meta));
+    localStorage.setItem(LS_REVOLUT, JSON.stringify(revolutConfirmed));
   }
 
   // ---------- Settings modal ----------
@@ -551,21 +570,22 @@
   // ---------- Fetching ----------
   async function fetchQuote(ticker){
     const info = getAssetInfo(ticker);
-
-    // VUAA is an EUR-listed UCITS ETF. Finnhub's free browser endpoint is
-    // not reliable for the VUAA.MI listing, so do not request it there.
-    // Ledger will use the manual VUAA price already stored in the holding.
-    if(ticker === 'VUAA'){
-      return {price:null, prevClose:null};
+    if(ticker === 'VUAA') return {price:null, prevClose:null, marketSymbol:info.marketSymbol};
+    const symbols = getMarketSymbols(ticker);
+    let lastError = null;
+    for(const symbol of symbols){
+      try{
+        const url = `https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(symbol)}&token=${apiKey}`;
+        const res = await fetch(url);
+        if(!res.ok) throw new Error(`quote ${symbol} failed`);
+        const d = await res.json();
+        if(Number.isFinite(Number(d.c)) && Number(d.c) > 0){
+          return {price:Number(d.c), prevClose:Number.isFinite(Number(d.pc))?Number(d.pc):null, marketSymbol:symbol};
+        }
+        lastError = new Error(`no quote for ${symbol}`);
+      }catch(e){ lastError=e; }
     }
-
-    const symbol = info.marketSymbol;
-    const url = `https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(symbol)}&token=${apiKey}`;
-    const res = await fetch(url);
-    if(!res.ok) throw new Error('quote failed');
-    const d = await res.json();
-    if(!Number.isFinite(Number(d.c)) || Number(d.c) <= 0) throw new Error('no quote');
-    return {price: Number(d.c), prevClose: Number.isFinite(Number(d.pc)) ? Number(d.pc) : null};
+    throw lastError || new Error('no quote');
   }
   async function fetchProfile(ticker){
     const info = getAssetInfo(ticker);
@@ -954,16 +974,16 @@
     // QQQ, SCHD, IWM, XLV, XLI, XLP, VNQ and BND are intentionally not used as
     // actionable candidates because the user invests through Revolut Malta.
     VUAA:{name:'Vanguard S&P 500 UCITS ETF',sector:'US Large Cap / Broad Market ETF',assetType:'Diversified ETF',exposure:'US large-cap equities; S&P 500; includes US technology exposure',broker:'Revolut',availability:'confirmed_existing'},
-    VWCE:{name:'Vanguard FTSE All-World UCITS ETF',sector:'Global Equity ETF',assetType:'Diversified ETF',exposure:'Global developed and emerging-market equities; includes substantial US exposure',broker:'Revolut',availability:'verify_in_app'},
-    CNDX:{name:'iShares NASDAQ 100 UCITS ETF',sector:'US Growth / Technology ETF',assetType:'Diversified ETF',exposure:'Nasdaq-100; concentrated US growth and technology exposure',broker:'Revolut',availability:'verify_in_app'},
-    VHYL:{name:'Vanguard FTSE All-World High Dividend Yield UCITS ETF',sector:'Global Dividend Equity ETF',assetType:'Diversified ETF',exposure:'Global dividend-paying equities across developed and emerging markets',broker:'Revolut',availability:'verify_in_app'},
-    WSML:{name:'iShares MSCI World Small Cap UCITS ETF',sector:'Global Small Cap ETF',assetType:'Diversified ETF',exposure:'Small-cap equities across developed markets',broker:'Revolut',availability:'verify_in_app'},
-    IUHC:{name:'iShares S&P 500 Health Care Sector UCITS ETF',sector:'US Healthcare ETF',assetType:'Sector ETF',exposure:'US healthcare sector',broker:'Revolut',availability:'verify_in_app'},
-    IUIS:{name:'iShares S&P 500 Industrials Sector UCITS ETF',sector:'US Industrials ETF',assetType:'Sector ETF',exposure:'US industrials sector',broker:'Revolut',availability:'verify_in_app'},
-    IUCS:{name:'iShares S&P 500 Consumer Staples Sector UCITS ETF',sector:'US Consumer Staples ETF',assetType:'Sector ETF',exposure:'US consumer staples sector',broker:'Revolut',availability:'verify_in_app'},
-    IWDP:{name:'iShares Developed Markets Property Yield UCITS ETF',sector:'Global Property ETF',assetType:'Property ETF',exposure:'Developed-market listed property companies and REITs',broker:'Revolut',availability:'verify_in_app'},
-    VAGF:{name:'Vanguard Global Aggregate Bond UCITS ETF EUR Hedged Accumulating',sector:'Global Bond ETF',assetType:'Bond ETF',exposure:'Global investment-grade and government bonds; EUR-hedged',broker:'Revolut',availability:'verify_in_app'},
-    IGLN:{name:'iShares Physical Gold ETC',sector:'Gold ETP',assetType:'Commodity ETP',exposure:'Physical gold exposure',broker:'Revolut',availability:'verify_in_app'}
+    VWCE:{name:'Vanguard FTSE All-World UCITS ETF',sector:'Global Equity ETF',assetType:'Diversified ETF',exposure:'Global developed and emerging-market equities; includes substantial US exposure',broker:'Revolut',availability:'verify_in_app',marketSymbols:['VWCE.DE','VWCE.MI','VWCE.AS']},
+    CNDX:{name:'iShares NASDAQ 100 UCITS ETF',sector:'US Growth / Technology ETF',assetType:'Diversified ETF',exposure:'Nasdaq-100; concentrated US growth and technology exposure',broker:'Revolut',availability:'verify_in_app',marketSymbols:['SXRV.DE','CSNDX.MI','CNDX.NA']},
+    VHYL:{name:'Vanguard FTSE All-World High Dividend Yield UCITS ETF',sector:'Global Dividend Equity ETF',assetType:'Diversified ETF',exposure:'Global dividend-paying equities across developed and emerging markets',broker:'Revolut',availability:'verify_in_app',marketSymbols:['VHYL.AS','VHYL.MI','VHYL.DE']},
+    WSML:{name:'iShares MSCI World Small Cap UCITS ETF',sector:'Global Small Cap ETF',assetType:'Diversified ETF',exposure:'Small-cap equities across developed markets',broker:'Revolut',availability:'verify_in_app',marketSymbols:['IUSN.DE']},
+    IUHC:{name:'iShares S&P 500 Health Care Sector UCITS ETF',sector:'US Healthcare ETF',assetType:'Sector ETF',exposure:'US healthcare sector',broker:'Revolut',availability:'verify_in_app',marketSymbols:['QDVG.DE']},
+    IUIS:{name:'iShares S&P 500 Industrials Sector UCITS ETF',sector:'US Industrials ETF',assetType:'Sector ETF',exposure:'US industrials sector',broker:'Revolut',availability:'verify_in_app',marketSymbols:['2B7C.DE']},
+    IUCS:{name:'iShares S&P 500 Consumer Staples Sector UCITS ETF',sector:'US Consumer Staples ETF',assetType:'Sector ETF',exposure:'US consumer staples sector',broker:'Revolut',availability:'verify_in_app',marketSymbols:['2B7D.DE']},
+    IWDP:{name:'iShares Developed Markets Property Yield UCITS ETF',sector:'Global Property ETF',assetType:'Property ETF',exposure:'Developed-market listed property companies and REITs',broker:'Revolut',availability:'verify_in_app',marketSymbols:['IWDP.MI','IQQ6.DE','IWDP.AS']},
+    VAGF:{name:'Vanguard Global Aggregate Bond UCITS ETF EUR Hedged Accumulating',sector:'Global Bond ETF',assetType:'Bond ETF',exposure:'Global investment-grade and government bonds; EUR-hedged',broker:'Revolut',availability:'verify_in_app',marketSymbols:['VAGF.MI','VAGF.DE']},
+    IGLN:{name:'iShares Physical Gold ETC',sector:'Gold ETP',assetType:'Commodity ETP',exposure:'Physical gold exposure',broker:'Revolut',availability:'verify_in_app',marketSymbols:['IGLN.MI','IGLN.DE']}
   };
 
   // Candidate metadata is deliberately shared between existing holdings, watchlist
@@ -994,7 +1014,8 @@
         assetType:base.assetType || 'Individual stock',
         exposure:base.exposure || ((meta[h.ticker]||{}).sector ? `Exposure associated with ${((meta[h.ticker]||{}).sector)}` : 'Not classified'),
         broker:base.broker || 'Revolut',
-        availability:base.availability || 'confirmed_existing',
+        availability:'confirmed',
+        revolutConfirmed:true,
         currentValueEUR:value===null?null:Number(value),
         currentAllocation:Number(allocation),
         price:v.nativePrice===null?null:Number(v.nativePrice),
@@ -1015,7 +1036,8 @@
           assetType:base.assetType || 'Candidate asset',
           exposure:base.exposure || 'Not classified from supplied data',
           broker:base.broker || 'Revolut',
-          availability:base.availability || 'verify_in_app',
+          availability:isRevolutConfirmed(t) ? 'confirmed' : (base.availability || 'verify_in_app'),
+          revolutConfirmed:isRevolutConfirmed(t),
           currentValueEUR:0,
           currentAllocation:0,
           price:q ? Number(q.price) : null,
@@ -1035,7 +1057,8 @@
           assetType:info.assetType,
           exposure:info.exposure,
           broker:info.broker || 'Revolut',
-          availability:info.availability || 'verify_in_app',
+          availability:isRevolutConfirmed(t) ? 'confirmed' : 'verify_in_app',
+          revolutConfirmed:isRevolutConfirmed(t),
           currentValueEUR:0,
           currentAllocation:0,
           price:q ? Number(q.price) : null,
@@ -1211,8 +1234,7 @@
   }
 
   async function fetchRecentNews(ticker){
-    const info=getAssetInfo(ticker);
-    const symbol=info.marketSymbol || ticker;
+    const symbol=(quotes[ticker]?.marketSymbol) || getMarketSymbols(ticker)[0] || ticker;
     const end=new Date(); const start=new Date(Date.now()-7*24*60*60*1000);
     const iso=d=>d.toISOString().slice(0,10);
     const url=`https://finnhub.io/api/v1/company-news?symbol=${encodeURIComponent(symbol)}&from=${iso(start)}&to=${iso(end)}&token=${apiKey}`;
@@ -1232,7 +1254,7 @@
     for(let i=0;i<unique.length;i+=4){
       const batch=unique.slice(i,i+4);
       await Promise.all(batch.map(async t=>{
-        const item={fundamentals:null,news:[],researchStatus:'partial'};
+        const item={fundamentals:null,news:[],researchStatus:'partial',marketSymbol:quotes[t]?.marketSymbol||null,revolutConfirmed:isRevolutConfirmed(t)};
         try{ item.fundamentals=await fetchFundamentals(t); }catch(e){}
         try{ item.news=await fetchRecentNews(t); }catch(e){}
         item.researchStatus=(item.fundamentals || item.news.length) ? 'available' : 'limited';
@@ -1253,7 +1275,7 @@
     });
     const candidates = Object.entries(OPPORTUNITY_UNIVERSE).map(([ticker,info])=>{
       const q=quotes[ticker];
-      return {ticker,name:info.name,sector:info.sector,assetType:info.assetType,exposure:info.exposure,broker:info.broker,availability:info.availability,price:q?Number(q.price):null,dayChangePct:q&&q.prevClose?Number((q.price-q.prevClose)/q.prevClose*100):null,research:research[ticker]||null};
+      return {ticker,name:info.name,sector:info.sector,assetType:info.assetType,exposure:info.exposure,broker:info.broker,availability:isRevolutConfirmed(ticker)?'confirmed':'verify_in_app',revolutConfirmed:isRevolutConfirmed(ticker),marketSymbol:q?.marketSymbol||null,price:q?Number(q.price):null,dayChangePct:q&&q.prevClose?Number((q.price-q.prevClose)/q.prevClose*100):null,research:research[ticker]||null};
     });
     return {currency:'EUR',fx:{EUR:1,USD:fxRates.USD},totalPortfolioValue:totalValue===null?null:Number(totalValue),concentrationThreshold:Number(threshold),holdings:current,candidates,monthlyContribution:Number(parseFloat($('monthlyContribution').value)||0),researchWindowDays:7};
   }
@@ -1266,13 +1288,14 @@
     wrap.className='';
     wrap.innerHTML=`<div class="opp-grid"><table>
       <thead><tr><th>Ticker</th><th class="num">Asset score</th><th class="num">Portfolio fit</th><th>Action</th><th>Live data</th><th>Reason</th><th></th></tr></thead>
-      <tbody>${rows.map(o=>{const r=researchByTicker[o.ticker]||{}; const f=r.fundamentals; const news=Array.isArray(r.news)?r.news:[]; const live=f?`P/E ${f.pe??'—'} · EPS ${f.eps??'—'} · Rev growth ${f.revenueGrowth!==null&&f.revenueGrowth!==undefined?f.revenueGrowth.toFixed(1)+'%':'—'}`:(news.length?`${news.length} recent headline${news.length===1?'':'s'}`:'Limited'); return `<tr>
-        <td class="tick">${escapeAI(o.ticker)}</td><td class="score">${escapeAI(o.assetScore)}/100</td><td class="score">${escapeAI(o.portfolioFit)}/100</td><td><span class="opp-badge">${escapeAI(o.action)}</span></td><td>${escapeAI(live)}</td><td class="opp-reason">${escapeAI(o.reason)}</td><td><button class="btn ghost opp-add" data-ticker="${escapeHtml(o.ticker)}">Add to watchlist</button></td>
+      <tbody>${rows.map(o=>{const r=researchByTicker[o.ticker]||{}; const f=r.fundamentals; const news=Array.isArray(r.news)?r.news:[]; const live=f?`P/E ${f.pe??'—'} · EPS ${f.eps??'—'} · Rev growth ${f.revenueGrowth!==null&&f.revenueGrowth!==undefined?f.revenueGrowth.toFixed(1)+'%':'—'}`:(news.length?`${news.length} recent headline${news.length===1?'':'s'}`:'Limited'); const confirmed=isRevolutConfirmed(o.ticker); const symbol=researchByTicker[o.ticker]?.marketSymbol; return `<tr>
+        <td class="tick">${escapeAI(o.ticker)}</td><td class="score">${escapeAI(o.assetScore)}/100</td><td class="score">${escapeAI(o.portfolioFit)}/100</td><td><span class="opp-badge">${escapeAI(confirmed?o.action:'WATCH')}</span></td><td>${escapeAI(live)}${symbol?`<div class="candidate-note">${escapeAI(symbol)}</div>`:''}</td><td class="opp-reason">${escapeAI(o.reason)}${confirmed?'':`<div class="candidate-note"><strong>Revolut:</strong> not confirmed. Verify this exact instrument in your Revolut Invest app before it can be actionable.</div>`}</td><td><button class="btn ghost opp-add" data-ticker="${escapeHtml(o.ticker)}">Add to watchlist</button>${confirmed?'':`<button class="btn ghost opp-confirm" data-ticker="${escapeHtml(o.ticker)}">Confirm Revolut</button>`}</td>
       </tr>`;}).join('')}</tbody></table></div>
       ${result.summary?`<div class="ai-reason"><strong>Research summary:</strong> ${escapeAI(result.summary)}</div>`:''}
       ${result.researchNotes?.length?`<div class="candidate-note"><strong>Data notes:</strong> ${result.researchNotes.map(escapeAI).join(' · ')}</div>`:''}
-      <div class="candidate-note">Live research covers the last 7 days of available news. Stock fundamentals are retrieved where supported; ETFs/ETPs may not expose company-style metrics. Missing data is shown as missing rather than estimated.</div>`;
+      <div class="candidate-note">Live research covers the last 7 days of available news. Revolut availability is a hard actionability gate: unconfirmed instruments remain WATCH until you confirm them in Revolut. Stock fundamentals are retrieved where supported; ETFs/ETPs may not expose company-style metrics. Missing data is shown as missing rather than estimated.</div>`;
     wrap.querySelectorAll('.opp-add').forEach(btn=>btn.onclick=()=>{const t=btn.dataset.ticker;if(!watchlist.includes(t)){watchlist.push(t);save();renderWatchlist();}btn.textContent='Added';btn.disabled=true;});
+    wrap.querySelectorAll('.opp-confirm').forEach(btn=>btn.onclick=()=>{setRevolutConfirmed(btn.dataset.ticker,true);btn.textContent='Confirmed';btn.disabled=true;});
   }
 
   async function scanOpportunities(){
