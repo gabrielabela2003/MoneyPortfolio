@@ -78,9 +78,16 @@ Return only the structured output.`;
     if(!response.ok) return send(res,response.status,{error:data?.error?.message||"Opportunity research failed."});
     const result=JSON.parse(extractText(data));
     const valid=new Set(input.candidates.map(c=>String(c?.ticker||"").toUpperCase()));
+    const candidateMap=new Map(input.candidates.map(c=>[String(c?.ticker||"").toUpperCase(), c]));
     result.opportunities=(Array.isArray(result.opportunities)?result.opportunities:[])
       .filter(o=>valid.has(String(o?.ticker||"").toUpperCase()))
-      .map(o=>({ticker:String(o.ticker).toUpperCase(),assetScore:Math.max(0,Math.min(100,Number(o.assetScore)||0)),portfolioFit:Math.max(0,Math.min(100,Number(o.portfolioFit)||0)),action:["CONSIDER","WATCH","PASS"].includes(o.action)?o.action:"WATCH",reason:String(o.reason||""),dataUsed:Array.isArray(o.dataUsed)?o.dataUsed.map(String):[]}));
+      .map(o=>{
+        const ticker=String(o.ticker).toUpperCase();
+        const c=candidateMap.get(ticker)||{};
+        const confirmed=c.revolutConfirmed===true || c.availability==='confirmed' || c.availability==='confirmed_existing';
+        const requestedAction=["CONSIDER","WATCH","PASS"].includes(o.action)?o.action:"WATCH";
+        return {ticker,assetScore:Math.max(0,Math.min(100,Number(o.assetScore)||0)),portfolioFit:Math.max(0,Math.min(100,Number(o.portfolioFit)||0)),action:confirmed?requestedAction:"WATCH",reason:String(o.reason||"")+(confirmed?"":" Revolut availability is not confirmed; verify the exact instrument in Revolut before treating this as actionable."),dataUsed:Array.isArray(o.dataUsed)?o.dataUsed.map(String):[]};
+      });
     result.summary=String(result.summary||"");
     result.researchNotes=Array.isArray(result.researchNotes)?result.researchNotes.map(String):[];
     if(!["HIGH","MEDIUM","LOW"].includes(result.dataQuality)) result.dataQuality="LOW";
