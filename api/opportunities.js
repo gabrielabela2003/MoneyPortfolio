@@ -51,6 +51,7 @@ IMPORTANT DATA RULES:
 - Recent price movement is context, NOT a standalone buy signal.
 - News is evidence/context, not a trading signal by itself. Distinguish reported facts from interpretations.
 - ETF candidates may have quote/metadata/news but no company fundamentals. Do not penalize an ETF merely because stock-style metrics are unavailable.
+- dataQuality must reflect actual supplied evidence: a valid quote plus appropriate asset-type evidence (ETF metadata for ETFs, fundamentals or news for stocks) counts as usable evidence.
 - Do not claim a candidate is attractive "right now" solely from a high score.
 - Portfolio fit considers current allocation, concentration, sector/geographic/asset-class overlap, and diversification.
 - The user's final decision remains their own.
@@ -90,7 +91,18 @@ Return only the structured output.`;
       });
     result.summary=String(result.summary||"");
     result.researchNotes=Array.isArray(result.researchNotes)?result.researchNotes.map(String):[];
-    if(!["HIGH","MEDIUM","LOW"].includes(result.dataQuality)) result.dataQuality="LOW";
+    const candidateRows=input.candidates.filter(Boolean);
+    const quoteCoverage=candidateRows.length ? candidateRows.filter(c=>Number.isFinite(Number(c?.price)) && Number(c.price)>0).length/candidateRows.length : 0;
+    const evidenceCoverage=candidateRows.length ? candidateRows.filter(c=>{
+      const r=c?.research||{};
+      const isStock=c?.assetType==='Individual stock';
+      return isStock ? Boolean(r?.fundamentals || (Array.isArray(r?.news)&&r.news.length)) : Boolean(r?.metadataAvailable);
+    }).length/candidateRows.length : 0;
+    const usableCoverage=Math.min(quoteCoverage,evidenceCoverage);
+    result.dataQuality=usableCoverage>=0.9?'HIGH':usableCoverage>=0.65?'MEDIUM':'LOW';
+    result.researchNotes=[...(Array.isArray(result.researchNotes)?result.researchNotes.map(String):[])];
+    if(quoteCoverage<0.9) result.researchNotes.push(`Live quote coverage is ${Math.round(quoteCoverage*100)}% of candidates.`);
+    if(evidenceCoverage<0.9) result.researchNotes.push(`Appropriate research evidence is available for ${Math.round(evidenceCoverage*100)}% of candidates.`);
     return send(res,200,result);
   } catch(e) {
     console.error("Opportunity research error:",e);
