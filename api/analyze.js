@@ -140,6 +140,7 @@ B) FAIR CANDIDATE COMPARISON
 - Do not treat a broad ETF as automatically better than a single stock, and do not treat an ETF
   as immune to portfolio concentration.
 - Use the supplied assetType and exposure metadata to understand broad characteristics.
+- Broker availability matters: prefer candidates marked availability='confirmed_existing' or availability='confirmed'; do not treat availability='verify_in_app' as confirmed executable availability. If the best-fit candidate is only marked verify_in_app, clearly state that the user must verify the ticker in Revolut before acting.
 - If data is missing, lower confidence and say so rather than inventing information.
 - Do not use dayChangePct or a recent gain/loss as a standalone buy signal.
 - For each candidate, return assetScore, portfolioFit, action and a concise reason.
