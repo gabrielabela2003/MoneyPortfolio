@@ -263,6 +263,11 @@
   .opp-badge{display:inline-block;padding:3px 7px;border:1px solid var(--rule);border-radius:4px;font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:600;}
   .opp-reason{min-width:260px;}
   .opp-note{font-size:11.5px;color:var(--ink-soft);margin-top:10px;line-height:1.45;}
+  .candidate-grid{margin-top:14px;width:100%;overflow:auto;}
+  .candidate-grid table{min-width:980px;}
+  .candidate-grid .score{font-family:'IBM Plex Mono',monospace;white-space:nowrap;}
+  .candidate-badge{display:inline-block;padding:3px 7px;border:1px solid var(--rule);border-radius:4px;font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:600;}
+  .candidate-note{font-size:11.5px;color:var(--ink-soft);margin-top:10px;line-height:1.45;}
 
 </style>
 </head>
@@ -944,25 +949,114 @@
   // Phase 2 starts with a deliberately small, transparent universe.
   // We can expand this later once the scanner is proven reliable.
   const OPPORTUNITY_UNIVERSE = {
-    VOO:{name:'Vanguard S&P 500 ETF',sector:'US Large Cap ETF'},
-    VTI:{name:'Vanguard Total Stock Market ETF',sector:'US Total Market ETF'},
-    VXUS:{name:'Vanguard Total International Stock ETF',sector:'International Equity ETF'},
-    QQQ:{name:'Invesco QQQ Trust',sector:'US Growth / Technology ETF'},
-    SCHD:{name:'Schwab U.S. Dividend Equity ETF',sector:'US Dividend Equity ETF'},
-    IWM:{name:'iShares Russell 2000 ETF',sector:'US Small Cap ETF'},
-    XLV:{name:'Health Care Select Sector SPDR Fund',sector:'US Healthcare ETF'},
-    XLI:{name:'Industrial Select Sector SPDR Fund',sector:'US Industrials ETF'},
-    XLP:{name:'Consumer Staples Select Sector SPDR Fund',sector:'US Consumer Staples ETF'},
-    VNQ:{name:'Vanguard Real Estate ETF',sector:'US Real Estate ETF'},
-    BND:{name:'Vanguard Total Bond Market ETF',sector:'US Bond ETF'},
-    GLD:{name:'SPDR Gold Shares',sector:'Gold ETF'}
+    VUAA:{name:'Vanguard S&P 500 UCITS ETF',sector:'US Large Cap / Broad Market ETF',assetType:'Diversified ETF',exposure:'US large-cap equities; S&P 500; includes US technology exposure'},
+    VOO:{name:'Vanguard S&P 500 ETF',sector:'US Large Cap ETF',assetType:'Diversified ETF',exposure:'US large-cap equities; S&P 500; includes US technology exposure'},
+    VTI:{name:'Vanguard Total Stock Market ETF',sector:'US Total Market ETF',assetType:'Diversified ETF',exposure:'Broad US equities across large-, mid- and small-cap companies'},
+    VXUS:{name:'Vanguard Total International Stock ETF',sector:'International Equity ETF',assetType:'Diversified ETF',exposure:'Non-US developed and emerging-market equities'},
+    QQQ:{name:'Invesco QQQ Trust',sector:'US Growth / Technology ETF',assetType:'Diversified ETF',exposure:'US large-cap growth; Nasdaq-100; concentrated technology/growth exposure'},
+    SCHD:{name:'Schwab U.S. Dividend Equity ETF',sector:'US Dividend Equity ETF',assetType:'Diversified ETF',exposure:'US dividend-oriented equities'},
+    IWM:{name:'iShares Russell 2000 ETF',sector:'US Small Cap ETF',assetType:'Diversified ETF',exposure:'US small-cap equities'},
+    XLV:{name:'Health Care Select Sector SPDR Fund',sector:'US Healthcare ETF',assetType:'Sector ETF',exposure:'US healthcare sector'},
+    XLI:{name:'Industrial Select Sector SPDR Fund',sector:'US Industrials ETF',assetType:'Sector ETF',exposure:'US industrials sector'},
+    XLP:{name:'Consumer Staples Select Sector SPDR Fund',sector:'US Consumer Staples ETF',assetType:'Sector ETF',exposure:'US consumer staples sector'},
+    VNQ:{name:'Vanguard Real Estate ETF',sector:'US Real Estate ETF',assetType:'Sector ETF',exposure:'US real estate equities/REITs'},
+    BND:{name:'Vanguard Total Bond Market ETF',sector:'US Bond ETF',assetType:'Bond ETF',exposure:'Broad US investment-grade bond market'},
+    GLD:{name:'SPDR Gold Shares',sector:'Gold ETF',assetType:'Commodity ETF',exposure:'Gold exposure'}
   };
+
+  // Candidate metadata is deliberately shared between existing holdings, watchlist
+  // assets and scanner assets. "source" is provenance only and MUST NOT influence
+  // the AI's score or recommendation.
+  const STOCK_DEFAULTS = {
+    AAPL:{name:'Apple',assetType:'Individual stock',exposure:'US large-cap technology/consumer electronics'},
+    MSFT:{name:'Microsoft',assetType:'Individual stock',exposure:'US large-cap technology/software'},
+    AVGO:{name:'Broadcom',assetType:'Individual stock',exposure:'US large-cap semiconductors/infrastructure software'},
+    NVDA:{name:'NVIDIA',assetType:'Individual stock',exposure:'US large-cap semiconductors/AI infrastructure'}
+  };
+
+  function buildCandidatePool(totalValue, totalAfterContribution, monthlyContribution){
+    // One neutral pool: existing holdings + watchlist + scanner universe.
+    // Existing holdings are NOT privileged; they simply carry source='existing'.
+    const byTicker = new Map();
+
+    holdings.forEach((h,i)=>{
+      const v=holdingValuation(h);
+      const value=v.valueEUR;
+      const allocation=totalValue && value!==null ? Number(value/totalValue*100) : 0;
+      const base=OPPORTUNITY_UNIVERSE[h.ticker] || STOCK_DEFAULTS[h.ticker] || {};
+      byTicker.set(h.ticker,{
+        ticker:h.ticker,
+        source:'existing',
+        name:(meta[h.ticker]||{}).name||base.name||v.info.name||h.ticker,
+        sector:(meta[h.ticker]||{}).sector||base.sector||v.info.sector||'Unclassified',
+        assetType:base.assetType || 'Individual stock',
+        exposure:base.exposure || ((meta[h.ticker]||{}).sector ? `Exposure associated with ${((meta[h.ticker]||{}).sector)}` : 'Not classified'),
+        currentValueEUR:value===null?null:Number(value),
+        currentAllocation:Number(allocation),
+        price:v.nativePrice===null?null:Number(v.nativePrice),
+        dayChangePct:v.p && v.p.prevClose && v.p.price ? Number((v.p.price-v.p.prevClose)/v.p.prevClose*100) : null
+      });
+    });
+
+    watchlist.forEach(t=>{
+      const q=quotes[t];
+      const info=getAssetInfo(t);
+      const base=OPPORTUNITY_UNIVERSE[t] || STOCK_DEFAULTS[t] || {};
+      if(!byTicker.has(t)){
+        byTicker.set(t,{
+          ticker:t,
+          source:'watchlist',
+          name:(meta[t]||{}).name||base.name||info.name||t,
+          sector:(meta[t]||{}).sector||base.sector||info.sector||'Unclassified',
+          assetType:base.assetType || 'Candidate asset',
+          exposure:base.exposure || 'Not classified from supplied data',
+          currentValueEUR:0,
+          currentAllocation:0,
+          price:q ? Number(q.price) : null,
+          dayChangePct:q && q.prevClose ? Number((q.price-q.prevClose)/q.prevClose*100) : null
+        });
+      }
+    });
+
+    Object.entries(OPPORTUNITY_UNIVERSE).forEach(([t,info])=>{
+      if(!byTicker.has(t)){
+        const q=quotes[t];
+        byTicker.set(t,{
+          ticker:t,
+          source:'scanner',
+          name:info.name,
+          sector:info.sector,
+          assetType:info.assetType,
+          exposure:info.exposure,
+          currentValueEUR:0,
+          currentAllocation:0,
+          price:q ? Number(q.price) : null,
+          dayChangePct:q && q.prevClose ? Number((q.price-q.prevClose)/q.prevClose*100) : null
+        });
+      }
+    });
+
+    return Array.from(byTicker.values()).map(c=>{
+      const current=Number(c.currentValueEUR||0);
+      const postValue=current+monthlyContribution;
+      const postAllocation=totalAfterContribution>0 ? postValue/totalAfterContribution*100 : 0;
+      return {
+        ...c,
+        currentValueEUR:Number(current),
+        currentAllocation:Number(c.currentAllocation||0),
+        postAllocation:Number(postAllocation),
+        allocationChange:Number(postAllocation-(c.currentAllocation||0))
+      };
+    });
+  }
 
   function buildAIData(){
     const valuations = holdings.map(holdingValuation);
     const totalValue = valuations.every(v=>v.valueEUR!==null)
       ? valuations.reduce((sum,v)=>sum+v.valueEUR,0)
       : null;
+    const monthlyContribution=Number(parseFloat($('monthlyContribution').value)||0);
+    const totalAfterContribution=(totalValue===null?0:totalValue)+monthlyContribution;
 
     const portfolio = holdings.map((h,i)=>{
       const v=valuations[i];
@@ -1004,12 +1098,14 @@
     return {
       currency:'EUR',
       fx:{EUR:1, USD:fxRates.USD},
-      monthlyContribution:Number(parseFloat($('monthlyContribution').value)||0),
+      monthlyContribution,
       concentrationThreshold:Number(threshold),
       totalPortfolioValue:totalValue===null?null:Number(totalValue),
+      totalPortfolioAfterContribution:Number(totalAfterContribution),
       holdings:portfolio,
       watchlist:watch,
-      note:'All portfolio allocations and total values are normalized to EUR. VUAA is treated as the EUR-listed holding and uses its stored manual price. Do not assume missing market/fundamental/news data.'
+      candidatePool:buildCandidatePool(totalValue,totalAfterContribution,monthlyContribution),
+      note:'Fair candidate test: existing holdings, watchlist assets and scanner assets are in one neutral candidate pool. source indicates provenance only and must not influence scores or recommendation. Candidate postAllocation assumes the full monthly contribution is directed to that candidate. Static asset metadata describes exposure; no missing fundamentals, valuation, news or forecasts should be invented.'
     };
   }
 
@@ -1024,6 +1120,7 @@
     const asset = result.recommendedTicker || result.ticker || '—';
 
     const holdings = Array.isArray(result.holdings) ? result.holdings : [];
+    const candidates = Array.isArray(result.candidateComparison) ? result.candidateComparison : [];
     const risks = Array.isArray(result.risks) ? result.risks : [];
 
     $('aiResult').className = '';
@@ -1035,7 +1132,30 @@
         <div class="ai-card"><div class="ai-label">Suggested asset</div><div class="ai-value">${escapeAI(asset)}</div></div>
       </div>
       <div class="ai-reason"><strong>Reasoning:</strong> ${escapeAI(result.reasoning || 'No reasoning returned.')}</div>
+
+      ${candidates.length ? `
+        <div style="margin-top:18px;font-size:13px;font-weight:600;">Fair candidate comparison</div>
+        <div class="candidate-note">Existing holdings, watchlist assets and scanner candidates are compared together. The source column shows where each candidate came from; it does not give the candidate an advantage.</div>
+        <div class="candidate-grid">
+          <table>
+            <thead><tr><th>Ticker</th><th>Source</th><th class="num">Asset score</th><th class="num">Portfolio fit</th><th class="num">Current wt.</th><th class="num">After €${Number(amount||0).toFixed(0)}</th><th>Action</th><th>Reason</th></tr></thead>
+            <tbody>${candidates.map(c=>`
+              <tr>
+                <td class="tick">${escapeAI(c.ticker)}</td>
+                <td><span class="candidate-badge">${escapeAI(c.source)}</span></td>
+                <td class="num">${escapeAI(c.assetScore)}/100</td>
+                <td class="num">${escapeAI(c.portfolioFit)}/100</td>
+                <td class="num">${Number(c.currentAllocation||0).toFixed(1)}%</td>
+                <td class="num">${Number(c.postAllocation||0).toFixed(1)}%</td>
+                <td><span class="ai-badge">${escapeAI(c.action)}</span></td>
+                <td>${escapeAI(c.reason)}</td>
+              </tr>`).join('')}</tbody>
+          </table>
+        </div>
+      ` : ''}
+
       ${holdings.length ? `
+        <div style="margin-top:18px;font-size:13px;font-weight:600;">Current holdings</div>
         <div class="ai-holdings">
           <table>
             <thead><tr><th>Ticker</th><th class="num">Asset score</th><th class="num">Portfolio fit</th><th>Action</th><th>Reason</th></tr></thead>
