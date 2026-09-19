@@ -387,11 +387,11 @@
     </div>
     <div class="opp-controls">
       <button class="btn" id="scanOppBtn">Scan opportunities</button>
-      <span class="opp-status">Uses a small built-in candidate universe plus your current portfolio.</span>
+      <span class="opp-status">Uses live quotes, available fundamentals and recent news plus your current portfolio.</span>
     </div>
     <div id="opportunityWrap"><div class="empty">Run a scan to see assets that may complement your portfolio.</div></div>
     <div class="opp-note">
-      This scanner is portfolio-fit research, not a prediction engine. It only uses the market data Ledger can retrieve plus the supplied portfolio structure; it does not invent valuation, news, or fundamental data.
+      This scanner is portfolio-fit research, not a prediction engine. It uses Ledger's live market data plus available fundamentals and recent news; missing data is not invented.
     </div>
   </section>
 
@@ -436,7 +436,8 @@
   let fxRates = {EUR:1, USD:null}; // native currency -> EUR conversion
   const BASE_CURRENCY = 'EUR';
   const ASSET_INFO = {
-    VUAA: {marketSymbol:'VUAA.MI', currency:'EUR', name:'Vanguard S&P 500 UCITS ETF', sector:'US Large Cap / Broad Market ETF'}
+    VUAA: {marketSymbol:'VUAA.MI', currency:'EUR', name:'Vanguard S&P 500 UCITS ETF', sector:'US Large Cap / Broad Market ETF'},
+    VAGF: {marketSymbol:'VAGF.MI', currency:'EUR', name:'Vanguard Global Aggregate Bond UCITS ETF EUR Hedged Accumulating', sector:'Global Bond ETF'}
   };
 
   // Keep VUAA as the user's display ticker. If an earlier version created a
@@ -1149,7 +1150,7 @@
         <div class="candidate-note">Existing holdings, watchlist assets and Revolut-oriented UCITS/ETP candidates are compared together. Broker availability is shown separately and does not affect asset quality. New candidates marked “verify” must be confirmed in Revolut before investing. “After full €X” shows the portfolio weight if the entire requested contribution (€X) were allocated to that candidate; it is not the AI’s final suggested amount.</div>
         <div class="candidate-grid">
           <table>
-            <thead><tr><th>Ticker</th><th>Source</th><th class="num">Asset score</th><th class="num">Portfolio fit</th><th class="num">Current wt.</th><th class="num">After full €${Number($('monthlyContribution')?.value || 0).toFixed(0)}</th><th>Action</th><th>Broker</th><th>Reason</th></tr></thead>
+            <thead><tr><th>Ticker</th><th>Source</th><th class="num">Asset score</th><th class="num">Portfolio fit</th><th class="num">Current wt.</th><th class="num">After full €${Number(monthlyContribution||0).toFixed(0)}</th><th>Action</th><th>Broker</th><th>Reason</th></tr></thead>
             <tbody>${candidates.map(c=>`
               <tr>
                 <td class="tick">${escapeAI(c.ticker)}</td>
@@ -1188,83 +1189,109 @@
     `;
   }
 
-  function buildOpportunityData(){
+  async function fetchFundamentals(ticker){
+    const stockTickers = new Set(['AAPL','MSFT','AVGO','NVDA']);
+    if(!stockTickers.has(ticker)) return null;
+    const url=`https://finnhub.io/api/v1/stock/metric?symbol=${encodeURIComponent(ticker)}&metric=all&token=${apiKey}`;
+    const res=await fetch(url); if(!res.ok) throw new Error('fundamentals failed');
+    const d=await res.json(); const m=d?.metric||{};
+    const pick=(...keys)=>{for(const k of keys){const v=Number(m[k]);if(Number.isFinite(v))return v;}return null;};
+    return {
+      pe:pick('peNormalizedAnnual','peTTM','peBasicExclExtraTTM'),
+      eps:pick('epsNormalizedAnnual','epsTTM'),
+      revenueGrowth:pick('revenueGrowthTTMYoy','revenueGrowth5Y'),
+      netMargin:pick('netProfitMarginTTM','netMarginTTM'),
+      beta:pick('beta'),
+      marketCap:pick('marketCapitalization'),
+      roe:pick('roeTTM','roeRfy'),
+      high52:pick('52WeekHigh'),
+      low52:pick('52WeekLow'),
+      source:'Finnhub company metrics'
+    };
+  }
+
+  async function fetchRecentNews(ticker){
+    const info=getAssetInfo(ticker);
+    const symbol=info.marketSymbol || ticker;
+    const end=new Date(); const start=new Date(Date.now()-7*24*60*60*1000);
+    const iso=d=>d.toISOString().slice(0,10);
+    const url=`https://finnhub.io/api/v1/company-news?symbol=${encodeURIComponent(symbol)}&from=${iso(start)}&to=${iso(end)}&token=${apiKey}`;
+    const res=await fetch(url); if(!res.ok) throw new Error('news failed');
+    const rows=await res.json();
+    if(!Array.isArray(rows)) return [];
+    return rows.slice(0,4).map(n=>({
+      headline:String(n.headline||''), source:String(n.source||''), url:String(n.url||''),
+      datetime:Number(n.datetime||0)
+    })).filter(n=>n.headline);
+  }
+
+  async function buildLiveResearch(tickers){
+    const research={};
+    const unique=[...new Set(tickers)];
+    // Small batches reduce the chance of hitting Finnhub rate limits.
+    for(let i=0;i<unique.length;i+=4){
+      const batch=unique.slice(i,i+4);
+      await Promise.all(batch.map(async t=>{
+        const item={fundamentals:null,news:[],researchStatus:'partial'};
+        try{ item.fundamentals=await fetchFundamentals(t); }catch(e){}
+        try{ item.news=await fetchRecentNews(t); }catch(e){}
+        item.researchStatus=(item.fundamentals || item.news.length) ? 'available' : 'limited';
+        research[t]=item;
+      }));
+      if(i+4<unique.length) await new Promise(r=>setTimeout(r,500));
+    }
+    return research;
+  }
+
+  function buildOpportunityData(research={}){
     const valuations = holdings.map(holdingValuation);
     const totalValue = valuations.every(v=>v.valueEUR!==null)
       ? valuations.reduce((sum,v)=>sum+v.valueEUR,0) : null;
     const current = holdings.map((h,i)=>{
-      const v=valuations[i];
-      const value=v.valueEUR;
-      return {
-        ticker:h.ticker,
-        name:(meta[h.ticker]||{}).name||v.info.name||h.ticker,
-        sector:(meta[h.ticker]||{}).sector||v.info.sector||'Unclassified',
-        allocation: totalValue && value!==null ? Number(value/totalValue*100) : null,
-        valueEUR:value===null?null:Number(value)
-      };
+      const v=valuations[i]; const value=v.valueEUR;
+      return {ticker:h.ticker,name:(meta[h.ticker]||{}).name||v.info.name||h.ticker,sector:(meta[h.ticker]||{}).sector||v.info.sector||'Unclassified',allocation:totalValue&&value!==null?Number(value/totalValue*100):null,valueEUR:value===null?null:Number(value),research:research[h.ticker]||null};
     });
-
     const candidates = Object.entries(OPPORTUNITY_UNIVERSE).map(([ticker,info])=>{
       const q=quotes[ticker];
-      return {
-        ticker, name:info.name, sector:info.sector,
-        price:q ? Number(q.price) : null,
-        dayChangePct:q && q.prevClose ? Number((q.price-q.prevClose)/q.prevClose*100) : null
-      };
+      return {ticker,name:info.name,sector:info.sector,assetType:info.assetType,exposure:info.exposure,broker:info.broker,availability:info.availability,price:q?Number(q.price):null,dayChangePct:q&&q.prevClose?Number((q.price-q.prevClose)/q.prevClose*100):null,research:research[ticker]||null};
     });
-    return {
-      currency:'EUR',
-      fx:{EUR:1,USD:fxRates.USD},
-      totalPortfolioValue:totalValue===null?null:Number(totalValue),
-      concentrationThreshold:Number(threshold),
-      holdings:current,
-      candidates,
-      monthlyContribution:Number(parseFloat($('monthlyContribution').value)||0)
-    };
+    return {currency:'EUR',fx:{EUR:1,USD:fxRates.USD},totalPortfolioValue:totalValue===null?null:Number(totalValue),concentrationThreshold:Number(threshold),holdings:current,candidates,monthlyContribution:Number(parseFloat($('monthlyContribution').value)||0),researchWindowDays:7};
   }
 
   function renderOpportunityResult(result){
     const rows=Array.isArray(result.opportunities)?result.opportunities:[];
     const wrap=$('opportunityWrap');
-    if(!rows.length){ wrap.className='empty'; wrap.textContent='No usable candidates were returned.'; return; }
+    if(!rows.length){wrap.className='empty';wrap.textContent='No usable candidates were returned.';return;}
+    const researchByTicker=result.researchByTicker||{};
     wrap.className='';
     wrap.innerHTML=`<div class="opp-grid"><table>
-      <thead><tr><th>Ticker</th><th class="num">Asset score</th><th class="num">Portfolio fit</th><th>Action</th><th>Reason</th><th></th></tr></thead>
-      <tbody>${rows.map(o=>`<tr>
-        <td class="tick">${escapeAI(o.ticker)}</td>
-        <td class="score">${escapeAI(o.assetScore)}/100</td>
-        <td class="score">${escapeAI(o.portfolioFit)}/100</td>
-        <td><span class="opp-badge">${escapeAI(o.action)}</span></td>
-        <td class="opp-reason">${escapeAI(o.reason)}</td>
-        <td><button class="btn ghost opp-add" data-ticker="${escapeHtml(o.ticker)}">Add to watchlist</button></td>
-      </tr>`).join('')}</tbody>
-    </table></div>
-    ${result.summary?`<div class="ai-reason"><strong>Scanner summary:</strong> ${escapeAI(result.summary)}</div>`:''}`;
-    wrap.querySelectorAll('.opp-add').forEach(btn=>btn.onclick=()=>{
-      const t=btn.dataset.ticker;
-      if(!watchlist.includes(t)){watchlist.push(t);save();renderWatchlist();}
-      btn.textContent='Added'; btn.disabled=true;
-    });
+      <thead><tr><th>Ticker</th><th class="num">Asset score</th><th class="num">Portfolio fit</th><th>Action</th><th>Live data</th><th>Reason</th><th></th></tr></thead>
+      <tbody>${rows.map(o=>{const r=researchByTicker[o.ticker]||{}; const f=r.fundamentals; const news=Array.isArray(r.news)?r.news:[]; const live=f?`P/E ${f.pe??'—'} · EPS ${f.eps??'—'} · Rev growth ${f.revenueGrowth!==null&&f.revenueGrowth!==undefined?f.revenueGrowth.toFixed(1)+'%':'—'}`:(news.length?`${news.length} recent headline${news.length===1?'':'s'}`:'Limited'); return `<tr>
+        <td class="tick">${escapeAI(o.ticker)}</td><td class="score">${escapeAI(o.assetScore)}/100</td><td class="score">${escapeAI(o.portfolioFit)}/100</td><td><span class="opp-badge">${escapeAI(o.action)}</span></td><td>${escapeAI(live)}</td><td class="opp-reason">${escapeAI(o.reason)}</td><td><button class="btn ghost opp-add" data-ticker="${escapeHtml(o.ticker)}">Add to watchlist</button></td>
+      </tr>`;}).join('')}</tbody></table></div>
+      ${result.summary?`<div class="ai-reason"><strong>Research summary:</strong> ${escapeAI(result.summary)}</div>`:''}
+      ${result.researchNotes?.length?`<div class="candidate-note"><strong>Data notes:</strong> ${result.researchNotes.map(escapeAI).join(' · ')}</div>`:''}
+      <div class="candidate-note">Live research covers the last 7 days of available news. Stock fundamentals are retrieved where supported; ETFs/ETPs may not expose company-style metrics. Missing data is shown as missing rather than estimated.</div>`;
+    wrap.querySelectorAll('.opp-add').forEach(btn=>btn.onclick=()=>{const t=btn.dataset.ticker;if(!watchlist.includes(t)){watchlist.push(t);save();renderWatchlist();}btn.textContent='Added';btn.disabled=true;});
   }
 
   async function scanOpportunities(){
-    const btn=$('scanOppBtn'), status=$('oppStatus'), wrap=$('opportunityWrap');
-    btn.disabled=true; btn.textContent='Scanning…'; status.textContent='loading candidate prices…';
+    const btn=$('scanOppBtn'),status=$('oppStatus'),wrap=$('opportunityWrap');
+    btn.disabled=true;btn.textContent='Scanning…';status.textContent='loading live prices…';
     try{
       if(!apiKey) throw new Error('Add your Finnhub API key in Settings first.');
       const candidates=Object.keys(OPPORTUNITY_UNIVERSE);
-      for(const t of candidates){
-        try{ quotes[t]=await fetchQuote(t); }catch(e){ quotes[t]=null; }
-      }
-      status.textContent='sending candidates to AI…';
-      const res=await fetch(OPPORTUNITY_ENDPOINT,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(buildOpportunityData())});
-      const data=await res.json();
-      if(!res.ok) throw new Error(data.error||'Opportunity scan failed');
-      renderOpportunityResult(data);
-      status.textContent=`scan updated · ${Array.isArray(data.opportunities)?data.opportunities.length:0} candidates`;
-    }catch(e){
-      wrap.className='empty ai-error'; wrap.textContent='Opportunity scan failed: '+e.message; status.textContent='error';
-    }finally{ btn.disabled=false; btn.textContent='Scan opportunities'; }
+      for(const t of candidates){try{quotes[t]=await fetchQuote(t);}catch(e){quotes[t]=null;}}
+      status.textContent='loading fundamentals and recent news…';
+      const researchTickers=[...new Set([...holdings.map(h=>h.ticker),...candidates])];
+      const research=await buildLiveResearch(researchTickers);
+      status.textContent='sending live research to AI…';
+      const res=await fetch(OPPORTUNITY_ENDPOINT,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(buildOpportunityData(research))});
+      const data=await res.json();if(!res.ok)throw new Error(data.error||'Opportunity scan failed');
+      data.researchByTicker=research;renderOpportunityResult(data);
+      status.textContent=`scan updated · ${Array.isArray(data.opportunities)?data.opportunities.length:0} candidates · ${data.dataQuality||'LOW'} data quality`;
+    }catch(e){wrap.className='empty ai-error';wrap.textContent='Opportunity scan failed: '+e.message;status.textContent='error';}
+    finally{btn.disabled=false;btn.textContent='Scan opportunities';}
   }
 
   async function analyzePortfolio(){
