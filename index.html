@@ -1047,7 +1047,1069 @@
       threshold = isNaN(v) ? 30 : v;
       localStorage.setItem(LS_THRESHOLD, String(threshold));
       renderDiversify();
+    });<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Ledger — Portfolio Tracker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,wght@0,400;0,600;0,700;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  :root{
+    --paper: #F6F4EE;
+    --paper-raised: #FCFBF7;
+    --ink: #1C1B18;
+    --ink-soft: #5B584F;
+    --rule: #DBD5C4;
+    --gain: #2F5233;
+    --gain-soft: #E7EEE3;
+    --loss: #8C3A2E;
+    --loss-soft: #F3E4DF;
+    --gold: #A6803D;
+    --focus: #2657A6;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:var(--paper);
+    color:var(--ink);
+    font-family:'Source Serif 4', Georgia, serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .mono{font-family:'IBM Plex Mono', ui-monospace, monospace;}
+  a{color:inherit;}
+  button{font-family:inherit;}
+  ::selection{background:#D9CFB0;}
+  :focus-visible{outline:2px solid var(--focus); outline-offset:2px;}
+
+  .masthead{
+    max-width:1040px;
+    margin:0 auto;
+    padding:28px 24px 18px;
+    display:flex;
+    align-items:baseline;
+    justify-content:space-between;
+    border-bottom:1px solid var(--rule);
+  }
+  .masthead h1{
+    font-size:28px;
+    font-weight:700;
+    margin:0;
+    letter-spacing:-0.01em;
+  }
+  .masthead .date-line{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:12px;
+    color:var(--ink-soft);
+  }
+  .masthead-right{display:flex; align-items:center; gap:14px;}
+  .icon-btn{
+    background:none;
+    border:1px solid var(--rule);
+    border-radius:5px;
+    width:34px; height:34px;
+    display:flex; align-items:center; justify-content:center;
+    cursor:pointer;
+    color:var(--ink-soft);
+  }
+  .icon-btn:hover{background:var(--paper-raised); color:var(--ink);}
+
+  main{max-width:1040px; margin:0 auto; padding:0 24px 80px;}
+
+  @keyframes riseIn{
+    from{ opacity:0; transform:translateY(8px); }
+    to{ opacity:1; transform:translateY(0); }
+  }
+  @media (prefers-reduced-motion: reduce){
+    .hero{ animation:none !important; }
+  }
+  .hero{
+    display:grid;
+    grid-template-columns:1.3fr 1fr;
+    gap:0;
+    padding:40px 28px;
+    margin-top:24px;
+    border-radius:10px;
+    background:
+      radial-gradient(120% 160% at 100% 0%, rgba(166,128,61,0.10), transparent 55%),
+      linear-gradient(180deg, var(--paper-raised), var(--paper));
+    border:1px solid var(--rule);
+    animation:riseIn 0.5s ease-out;
+  }
+  .hero-value .label{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:12px;
+    color:var(--ink-soft);
+    margin-bottom:6px;
+  }
+  .hero-value .amount{
+    font-size:52px;
+    font-weight:700;
+    line-height:1;
+    font-family:'IBM Plex Mono', monospace;
+    letter-spacing:-0.02em;
+  }
+  .hero-value .amount.placeholder-amt{color:var(--ink-soft); font-weight:400;}
+  .hero-stats{display:flex; flex-direction:column; justify-content:center; gap:14px; border-left:1px solid var(--rule); padding-left:28px;}
+  .hero-stat{display:flex; justify-content:space-between; align-items:baseline;}
+  .hero-stat .k{font-size:13px; color:var(--ink-soft);}
+  .hero-stat .v{font-family:'IBM Plex Mono', monospace; font-size:16px; font-weight:600;}
+  .pos{color:var(--gain);}
+  .neg{color:var(--loss);}
+
+  .section{padding:32px 0; border-bottom:1px solid var(--rule);}
+  .section-head{display:flex; align-items:baseline; justify-content:space-between; margin-bottom:16px;}
+  .section-head h2{font-size:18px; margin:0; font-weight:600;}
+  .section-head .hint{font-size:12.5px; color:var(--ink-soft); font-family:'IBM Plex Mono', monospace;}
+
+  table{width:100%; border-collapse:collapse;}
+  th{
+    text-align:left;
+    font-family:'IBM Plex Mono', monospace;
+    font-size:11px;
+    color:var(--ink-soft);
+    font-weight:500;
+    padding:0 10px 8px;
+    border-bottom:1px solid var(--rule);
+  }
+  th.num, td.num{text-align:right;}
+  td{padding:12px 10px; border-bottom:1px solid var(--rule); font-size:14.5px; vertical-align:middle;}
+  tr:last-child td{border-bottom:none;}
+  td.num, td.tick{font-family:'IBM Plex Mono', monospace;}
+  td.tick{font-weight:600;}
+  .row-name{color:var(--ink-soft); font-size:12.5px; display:block; margin-top:2px; font-family:'Source Serif 4', serif;}
+  .del-btn{
+    background:none; border:none; color:var(--ink-soft); cursor:pointer; font-size:13px;
+    font-family:'IBM Plex Mono', monospace; padding:4px 6px;
+  }
+  .del-btn:hover{color:var(--loss);}
+  .manual-tag{
+    font-size:10px; color:var(--gold); border:1px solid var(--gold); border-radius:3px;
+    padding:1px 4px; margin-left:6px; vertical-align:middle; font-family:'IBM Plex Mono', monospace;
+  }
+  .row-actions{display:flex; gap:10px; justify-content:flex-end;}
+  input.manual-price-input{
+    font-family:'IBM Plex Mono', monospace; font-size:13px; width:90px; text-align:right;
+    padding:5px 7px; border:1px solid var(--gold); border-radius:4px; background:var(--paper-raised); color:var(--ink);
+  }
+
+  .add-row{display:flex; gap:10px; flex-wrap:wrap; margin-top:16px;}
+  .add-row input{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:13px;
+    padding:9px 10px;
+    border:1px solid var(--rule);
+    border-radius:4px;
+    background:var(--paper-raised);
+    color:var(--ink);
+    min-width:90px;
+  }
+  .add-row input::placeholder{color:#A9A392;}
+  .btn{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:13px;
+    padding:9px 16px;
+    border-radius:4px;
+    border:1px solid var(--ink);
+    background:var(--ink);
+    color:var(--paper);
+    cursor:pointer;
+  }
+  .btn:hover{background:#3a382f;}
+  .btn.ghost{background:none; color:var(--ink); border-color:var(--rule);}
+  .btn.ghost:hover{border-color:var(--ink);}
+
+  .allocation-grid{display:grid; grid-template-columns:200px 1fr; gap:32px; align-items:center;}
+  .donut-wrap{position:relative; height:200px;}
+  .donut-center{
+    position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    pointer-events:none;
+  }
+  .donut-center .n{font-family:'IBM Plex Mono', monospace; font-size:22px; font-weight:600;}
+  .donut-center .l{font-size:11px; color:var(--ink-soft); font-family:'IBM Plex Mono', monospace;}
+  .allocation-list{display:flex; flex-direction:column; gap:11px;}
+  .alloc-row{display:grid; grid-template-columns:14px 1fr 52px; align-items:center; gap:10px;}
+  .alloc-dot{width:10px; height:10px; border-radius:50%; flex:none;}
+  .alloc-row .sector-name{font-size:13.5px;}
+  .alloc-pct{font-family:'IBM Plex Mono', monospace; font-size:12.5px; text-align:right; color:var(--ink-soft);}
+
+  .chart-wrap{height:220px;}
+  .perf-chart-wrap{height:auto; min-height:120px;}
+
+  @media (max-width:640px){
+    .allocation-grid{grid-template-columns:1fr;}
+    .donut-wrap{margin:0 auto;}
+  }
+
+  .empty{
+    padding:34px 20px; text-align:center; color:var(--ink-soft); font-size:14px;
+    border:1px dashed var(--rule); border-radius:6px;
+  }
+
+  .watch-item{display:flex; justify-content:space-between; align-items:center; padding:10px 0; border-bottom:1px solid var(--rule);}
+  .watch-item:last-child{border-bottom:none;}
+  .watch-tick{font-family:'IBM Plex Mono', monospace; font-weight:600;}
+  .watch-price{font-family:'IBM Plex Mono', monospace; display:flex; gap:10px; align-items:baseline;}
+
+  .modal-backdrop{
+    position:fixed; inset:0; background:rgba(28,27,24,0.45);
+    display:none; align-items:center; justify-content:center; z-index:10; padding:20px;
+  }
+  .modal-backdrop.open{display:flex;}
+  .modal{
+    background:var(--paper-raised); border-radius:8px; padding:26px; max-width:420px; width:100%;
+    border:1px solid var(--rule);
+  }
+  .modal h3{margin:0 0 6px; font-size:17px;}
+  .modal p{font-size:13px; color:var(--ink-soft); line-height:1.5; margin-top:0;}
+  .modal input{width:100%; margin:14px 0; padding:10px; font-family:'IBM Plex Mono',monospace; font-size:13px; border:1px solid var(--rule); border-radius:4px; background:var(--paper);}
+  .modal-actions{display:flex; justify-content:flex-end; gap:10px;}
+
+  .disclaimer{font-size:12px; color:var(--ink-soft); text-align:center; padding:30px 24px 0; max-width:640px; margin:0 auto; line-height:1.6;}
+
+  .diversify-list{display:flex; flex-direction:column; gap:10px;}
+  .diversify-item{
+    display:flex; justify-content:space-between; align-items:center; gap:16px;
+    padding:12px 14px; border-radius:6px; border:1px solid var(--rule); background:var(--paper-raised);
+  }
+  .diversify-item.flag{ border-color:var(--gold); background:#FBF3E4; }
+  .diversify-item .di-label{font-size:13.5px;}
+  .diversify-item .di-pct{font-family:'IBM Plex Mono', monospace; font-weight:600; font-size:13.5px;}
+  .threshold-row{display:flex; align-items:center; gap:10px; margin-top:14px; font-size:12.5px; color:var(--ink-soft);}
+  .threshold-row input{
+    width:56px; font-family:'IBM Plex Mono', monospace; font-size:12.5px; padding:5px 7px;
+    border:1px solid var(--rule); border-radius:4px; background:var(--paper-raised); color:var(--ink);
+  }
+
+  @media (max-width:640px){
+    .hero{grid-template-columns:1fr; gap:22px;}
+    .hero-stats{border-left:none; border-top:1px solid var(--rule); padding-left:0; padding-top:18px;}
+    .hero-value .amount{font-size:38px;}
+    th:nth-child(4), td:nth-child(4){display:none;}
+  }
+
+  .ai-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:14px;}
+  .ai-card{border:1px solid var(--rule);border-radius:6px;background:var(--paper-raised);padding:14px;}
+  .ai-card .ai-label{font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.04em;margin-bottom:5px;}
+  .ai-card .ai-value{font-family:'IBM Plex Mono',monospace;font-size:18px;font-weight:600;}
+  .ai-reason{margin-top:14px;padding:14px;border-left:3px solid var(--gold);background:#FBF3E4;font-size:13.5px;line-height:1.55;}
+  .ai-list{margin:14px 0 0;padding-left:18px;font-size:13.5px;line-height:1.55;}
+  .ai-holdings{margin-top:14px;width:100%;overflow:auto;}
+  .ai-holdings table{min-width:620px;}
+  .ai-badge{display:inline-block;padding:3px 7px;border:1px solid var(--rule);border-radius:4px;font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:600;}
+  .ai-error{color:var(--loss);border-color:var(--loss);background:var(--loss-soft);}
+  .currency-note{font-size:11.5px;color:var(--ink-soft);margin-top:8px;line-height:1.45;}
+  @media(max-width:640px){.ai-grid{grid-template-columns:1fr;}}
+
+</style>
+</head>
+<body>
+
+<div class="masthead">
+  <div>
+    <h1>Ledger</h1>
+    <div class="date-line" id="lastUpdated">not yet refreshed</div>
+  </div>
+  <div class="masthead-right">
+    <span class="date-line" id="refreshState">—</span>
+    <button class="icon-btn" id="settingsBtn" title="Settings" aria-label="Settings">⚙</button>
+  </div>
+</div>
+
+<main>
+
+  <section class="hero">
+    <div class="hero-value">
+      <div class="label">TOTAL PORTFOLIO VALUE</div>
+      <div class="amount" id="totalValue">Add a holding to begin</div>
+    </div>
+    <div class="hero-stats">
+      <div class="hero-stat"><span class="k">Today</span><span class="v" id="dayChange">—</span></div>
+      <div class="hero-stat"><span class="k">All-time gain/loss</span><span class="v" id="totalGain">—</span></div>
+      <div class="hero-stat"><span class="k">Holdings</span><span class="v mono" id="holdingCount">0</span></div>
+    </div>
+  </section>
+
+  <section class="section" id="holdingsSection">
+    <div class="section-head">
+      <h2>Holdings</h2>
+      <span class="hint" id="apiHint"></span>
+    </div>
+    <div id="holdingsTableWrap"></div>
+    <div class="add-row">
+      <input id="newTicker" placeholder="TICKER (e.g. AAPL)" maxlength="8">
+      <input id="newShares" placeholder="Shares" type="number" step="any" min="0">
+      <input id="newCost" placeholder="Avg. cost / share" type="number" step="any" min="0">
+      <button class="btn" id="addHoldingBtn">Add holding</button>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="section-head">
+      <h2>Value over time</h2>
+      <span class="hint">Logged each time you open Ledger</span>
+    </div>
+    <div class="chart-wrap"><canvas id="historyChart"></canvas></div>
+  </section>
+
+  <section class="section">
+    <div class="section-head">
+      <h2>Sector allocation</h2>
+    </div>
+    <div id="allocationWrap"><div class="empty">Add holdings to see how you're spread across sectors.</div></div>
+  </section>
+
+  <section class="section">
+    <div class="section-head">
+      <h2>Diversification checker</h2>
+      <span class="hint">Concentration risk, not a buy/sell signal</span>
+    </div>
+    <div id="diversifyWrap"><div class="empty">Add holdings to see your concentration.</div></div>
+    <div class="threshold-row">
+      Flag anything above <input type="number" id="thresholdInput" min="5" max="100" step="1"> % of your portfolio
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="section-head">
+      <h2>Performance by holding</h2>
+      <span class="hint">Gain/loss vs. your cost basis</span>
+    </div>
+    <div class="perf-chart-wrap"><canvas id="perfChart"></canvas></div>
+  </section>
+
+  <section class="section" style="border-bottom:none;">
+    <div class="section-head">
+      <h2>Watchlist</h2>
+      <span class="hint">Prices only — not counted in your total</span>
+    </div>
+    <div id="watchlistWrap"><div class="empty">No stocks on your watchlist yet.</div></div>
+    <div class="add-row">
+      <input id="newWatchTicker" placeholder="TICKER to watch">
+      <button class="btn ghost" id="addWatchBtn">Add to watchlist</button>
+    </div>
+  </section>
+
+
+  <section class="section" id="aiSection">
+    <div class="section-head">
+      <h2>AI Portfolio Intelligence</h2>
+      <span class="hint" id="aiStatus">Ready</span>
+    </div>
+
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:16px;">
+      <label for="monthlyContribution" style="font-size:13px;color:var(--ink-soft);">
+        Monthly contribution €
+      </label>
+      <input id="monthlyContribution" type="number" min="0" step="10" value="100"
+        style="font-family:'IBM Plex Mono',monospace;font-size:13px;padding:9px 10px;border:1px solid var(--rule);border-radius:4px;background:var(--paper-raised);color:var(--ink);width:120px;">
+      <button class="btn" id="analyzeBtn">Analyze portfolio</button>
+    </div>
+    <div class="currency-note">Portfolio totals and allocations are calculated in EUR. US-listed assets are converted using the backend EUR/USD reference rate; VUAA is mapped to its EUR Borsa Italiana listing (VUAA.MI).</div>
+
+    <div id="aiResult" class="empty">
+      Click <strong>Analyze portfolio</strong> to get a portfolio-aware AI analysis.
+    </div>
+  </section>
+
+  <p class="disclaimer">
+    Ledger shows the data you enter and current market prices. Its AI feature provides decision-support analysis based on the data supplied to it; it is not investment advice.
+    AI outputs can be wrong and do not guarantee future returns. Decide your own trades, or talk to a
+    licensed financial adviser for guidance tailored to you.
+  </p>
+
+</main>
+
+<div class="modal-backdrop" id="settingsModal">
+  <div class="modal">
+    <h3>Finnhub API key</h3>
+    <p>Ledger needs a free API key to fetch live prices. Get one in about a minute at
+      <a href="https://finnhub.io/register" target="_blank" rel="noopener">finnhub.io/register</a> — no card required.
+      Your key is stored only in this browser and is never sent anywhere except Finnhub.</p>
+    <input id="apiKeyInput" placeholder="Paste your API key here">
+    <div class="modal-actions">
+      <button class="btn ghost" id="closeModalBtn">Cancel</button>
+      <button class="btn" id="saveKeyBtn">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  const LS_HOLDINGS = 'ledger_holdings';
+  const LS_WATCHLIST = 'ledger_watchlist';
+  const LS_API_KEY = 'ledger_finnhub_key';
+  const LS_HISTORY = 'ledger_history_eur_v2';
+  const LS_META = 'ledger_meta'; // cached name/sector per ticker
+  const LS_THRESHOLD = 'ledger_threshold';
+
+  let holdings = JSON.parse(localStorage.getItem(LS_HOLDINGS) || '[]');
+  let watchlist = JSON.parse(localStorage.getItem(LS_WATCHLIST) || '[]');
+  let apiKey = localStorage.getItem(LS_API_KEY) || '';
+  let history = JSON.parse(localStorage.getItem(LS_HISTORY) || '[]');
+  let meta = JSON.parse(localStorage.getItem(LS_META) || '{}');
+  let threshold = parseFloat(localStorage.getItem(LS_THRESHOLD) || '30');
+  let quotes = {}; // display ticker -> {price, prevClose}
+  let fxRates = {EUR:1, USD:null}; // native currency -> EUR conversion
+  const BASE_CURRENCY = 'EUR';
+  const ASSET_INFO = {
+    VUAA: {marketSymbol:'VUAA.MI', currency:'EUR', name:'Vanguard S&P 500 UCITS ETF', sector:'US Large Cap / Broad Market ETF'}
+  };
+
+  // Keep VUAA as the user's display ticker. If an earlier version created a
+  // duplicate VUAA.MI holding, merge/remove it so the same investment is not
+  // counted twice. We only do this for the known display/market-symbol pair.
+  (function normalizeKnownTickers(){
+    const vuaa = holdings.find(h => h.ticker === 'VUAA');
+    const vuaaMi = holdings.find(h => h.ticker === 'VUAA.MI');
+    if(vuaaMi && vuaa){
+      holdings = holdings.filter(h => h.ticker !== 'VUAA.MI');
+    } else if(vuaaMi && !vuaa){
+      vuaaMi.ticker = 'VUAA';
+      holdings = holdings.filter((h,i,a) => i === a.findIndex(x => x.ticker === h.ticker));
+    }
+    const watchMi = watchlist.indexOf('VUAA.MI');
+    if(watchMi !== -1){
+      watchlist.splice(watchMi, 1);
+      if(!watchlist.includes('VUAA')) watchlist.push('VUAA');
+    }
+  })();
+
+  function getAssetInfo(ticker){
+    return ASSET_INFO[ticker] || {marketSymbol:ticker, currency:'USD', name:ticker, sector:'Unclassified'};
+  }
+  function toEUR(amount, currency){
+    if(amount===null || amount===undefined || !Number.isFinite(Number(amount))) return null;
+    if(currency==='EUR') return Number(amount);
+    const rate = fxRates[currency];
+    if(!rate || !Number.isFinite(rate)) return null;
+    return Number(amount) / rate;
+  }
+  function holdingValuation(h){
+    const info = getAssetInfo(h.ticker);
+    const p = getPrice(h);
+    const nativePrice = p.price!==null ? p.price : Number(h.costBasis);
+    const nativeValue = Number.isFinite(nativePrice) ? nativePrice*h.shares : null;
+    const valueEUR = toEUR(nativeValue, info.currency);
+    const prevNative = p.prevClose!==null ? p.prevClose : Number(h.costBasis);
+    const prevEUR = toEUR(prevNative*h.shares, info.currency);
+    const costEUR = toEUR(Number(h.costBasis)*h.shares, info.currency);
+    return {info, p, nativePrice, nativeValue, valueEUR, prevEUR, costEUR};
+  }
+  let chart = null;
+  let donutChart = null;
+  let perfChart = null;
+  let refreshTimer = null;
+  const PALETTE = ['#A6803D','#2F5233','#8C3A2E','#2657A6','#6B5B95','#4C7A73','#B0793D','#7A5C3E'];
+
+  const $ = id => document.getElementById(id);
+  save();
+  const fmt$ = n => (n<0?'-$':'$') + Math.abs(n).toLocaleString(undefined,{minimumFractionDigits:2, maximumFractionDigits:2});
+  const fmtEUR = n => (n<0?'−€':'€') + Math.abs(n).toLocaleString(undefined,{minimumFractionDigits:2, maximumFractionDigits:2});
+  const fmtNative = (n,currency) => currency==='EUR' ? fmtEUR(n) : fmt$(n);
+  const fmtPct = n => (n>0?'+':'') + n.toFixed(2) + '%';
+
+  function save(){
+    localStorage.setItem(LS_HOLDINGS, JSON.stringify(holdings));
+    localStorage.setItem(LS_WATCHLIST, JSON.stringify(watchlist));
+    localStorage.setItem(LS_HISTORY, JSON.stringify(history));
+    localStorage.setItem(LS_META, JSON.stringify(meta));
+  }
+
+  // ---------- Settings modal ----------
+  $('settingsBtn').onclick = () => { $('apiKeyInput').value = apiKey; $('settingsModal').classList.add('open'); };
+  $('closeModalBtn').onclick = () => $('settingsModal').classList.remove('open');
+  $('saveKeyBtn').onclick = () => {
+    apiKey = $('apiKeyInput').value.trim();
+    localStorage.setItem(LS_API_KEY, apiKey);
+    $('settingsModal').classList.remove('open');
+    refreshAll();
+  };
+
+  // ---------- Add holding / watchlist ----------
+  $('addHoldingBtn').onclick = () => {
+    const ticker = $('newTicker').value.trim().toUpperCase();
+    const shares = parseFloat($('newShares').value);
+    const cost = parseFloat($('newCost').value);
+    if(!ticker || !shares || shares<=0 || isNaN(cost)){
+      alert('Enter a ticker, a positive number of shares, and your average cost per share.');
+      return;
+    }
+    const existing = holdings.find(h=>h.ticker===ticker);
+    if(existing){
+      const totalShares = existing.shares + shares;
+      existing.costBasis = ((existing.costBasis*existing.shares)+(cost*shares))/totalShares;
+      existing.shares = totalShares;
+    } else {
+      holdings.push({ticker, shares, costBasis: cost});
+    }
+    $('newTicker').value=''; $('newShares').value=''; $('newCost').value='';
+    save(); renderHoldings(); refreshAll();
+  };
+
+  $('addWatchBtn').onclick = () => {
+    const ticker = $('newWatchTicker').value.trim().toUpperCase();
+    if(!ticker) return;
+    if(!watchlist.includes(ticker)) watchlist.push(ticker);
+    $('newWatchTicker').value='';
+    save(); renderWatchlist(); refreshAll();
+  };
+
+  function removeHolding(ticker){
+    holdings = holdings.filter(h=>h.ticker!==ticker);
+    save(); renderHoldings(); renderHero(); renderAllocation(); renderDiversify(); renderPerf();
+  }
+  function removeWatch(ticker){
+    watchlist = watchlist.filter(t=>t!==ticker);
+    save(); renderWatchlist();
+  }
+
+  // ---------- Fetching ----------
+  async function fetchQuote(ticker){
+    const info = getAssetInfo(ticker);
+    const symbol = info.marketSymbol;
+    const url = `https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(symbol)}&token=${apiKey}`;
+    const res = await fetch(url);
+    if(!res.ok) throw new Error('quote failed');
+    const d = await res.json();
+    if(!Number.isFinite(Number(d.c)) || Number(d.c) <= 0) throw new Error('no quote');
+    return {price: Number(d.c), prevClose: Number.isFinite(Number(d.pc)) ? Number(d.pc) : null};
+  }
+  async function fetchProfile(ticker){
+    const info = getAssetInfo(ticker);
+    if(ASSET_INFO[ticker]) return {name:info.name, sector:info.sector};
+    const url = `https://finnhub.io/api/v1/stock/profile2?symbol=${encodeURIComponent(info.marketSymbol)}&token=${apiKey}`;
+    const res = await fetch(url);
+    if(!res.ok) throw new Error('profile failed');
+    const d = await res.json();
+    return {name: d.name || ticker, sector: d.finnhubIndustry || 'Unclassified'};
+  }
+  async function fetchFXRates(){
+    // FX is handled by the Vercel backend, not Finnhub in the browser.
+    // The endpoint returns USD per EUR, so USD -> EUR is USD / EURUSD.
+    fxRates.EUR = 1;
+    const url = 'https://money-portfolio-topaz.vercel.app/api/fx';
+    const res = await fetch(url, {cache:'no-store'});
+    if(!res.ok) throw new Error('EUR/USD rate failed');
+    const d = await res.json();
+    const eurUsd = Number(d?.rate);
+    if(!Number.isFinite(eurUsd) || eurUsd <= 0) throw new Error('EUR/USD rate unavailable');
+    fxRates.USD = eurUsd;
+    return eurUsd;
+  }
+
+  async function refreshAll(){
+    const tickers = Array.from(new Set([...holdings.map(h=>h.ticker), ...watchlist]));
+    if(!apiKey){
+      $('apiHint').textContent = 'Add a free API key (⚙) to load live prices';
+      renderHoldings(); renderWatchlist(); renderHero(); renderAllocation(); renderDiversify(); renderPerf();
+      return;
+    }
+    if(tickers.length===0){
+      $('apiHint').textContent='';
+      renderHoldings(); renderWatchlist(); renderHero(); renderAllocation(); renderDiversify(); renderPerf();
+      return;
+    }
+    $('refreshState').textContent = 'refreshing…';
+    $('apiHint').textContent = '';
+    try{
+      const needsUSD = tickers.some(t => getAssetInfo(t).currency === 'USD');
+      let fxWarning = '';
+      if(needsUSD){
+        try{
+          await fetchFXRates();
+        } catch(e){
+          fxWarning = ' · FX unavailable';
+          // Do not block individual market quotes because an FX endpoint is
+          // unavailable. The EUR portfolio total will remain unavailable until
+          // a valid EUR/USD rate is obtained.
+        }
+      }
+
+      await Promise.all(tickers.map(async t => {
+        try{
+          const q = await fetchQuote(t);
+          quotes[t] = q;
+          if(ASSET_INFO[t]){
+            meta[t] = {name:ASSET_INFO[t].name, sector:ASSET_INFO[t].sector};
+          } else if(!meta[t]){
+            try{ meta[t] = await fetchProfile(t); } catch(e){ meta[t] = {name:t, sector:'Unclassified'}; }
+          }
+        } catch(e){ /* skip ticker on failure */ }
+      }));
+      save();
+      $('lastUpdated').textContent = 'updated ' + new Date().toLocaleTimeString();
+      $('refreshState').textContent = needsUSD && fxRates.USD ? `auto-refresh: on · EUR/USD ${fxRates.USD.toFixed(4)}${fxWarning}` : `auto-refresh: on${fxWarning}`;
+      logHistorySnapshot();
+    } catch(e){
+      $('refreshState').textContent = 'refresh failed · ' + e.message;
+    }
+    renderHoldings(); renderWatchlist(); renderHero(); renderAllocation(); renderDiversify(); renderPerf(); renderChart();
+  }
+
+  function logHistorySnapshot(){
+    const valuations = holdings.map(holdingValuation);
+    if(valuations.some(v=>v.valueEUR===null)) return;
+    const total = valuations.reduce((sum,v)=>sum+v.valueEUR,0);
+    if(total<=0) return;
+    const today = new Date().toISOString().slice(0,10);
+    const last = history[history.length-1];
+    if(last && last.date===today){ last.value = total; }
+    else { history.push({date: today, value: total}); }
+    if(history.length>90) history = history.slice(-90);
+  }
+
+  // ---------- Rendering ----------
+  // Resolves the effective price for a holding: live quote > manual override > null (unpriced)
+  function getPrice(h){
+    const q = quotes[h.ticker];
+    if(q && q.price) return {price:q.price, prevClose:q.prevClose, live:true};
+    if(h.manualPrice!==undefined && h.manualPrice!==null) return {price:h.manualPrice, prevClose:h.manualPrice, live:false};
+    return {price:null, prevClose:null, live:false};
+  }
+
+  function setManualPrice(ticker, value){
+    const h = holdings.find(h=>h.ticker===ticker);
+    if(!h) return;
+    const v = parseFloat(value);
+    h.manualPrice = isNaN(v) ? undefined : v;
+    save();
+    renderHero(); renderHoldings(); renderAllocation(); renderDiversify(); renderPerf();
+  }
+
+  function editHolding(ticker){
+    const h = holdings.find(h=>h.ticker===ticker);
+    if(!h) return;
+    const newShares = prompt(`Shares of ${ticker}:`, h.shares);
+    if(newShares===null) return;
+    const sharesNum = parseFloat(newShares);
+    if(isNaN(sharesNum) || sharesNum<=0){ alert('Enter a positive number of shares.'); return; }
+    const newCost = prompt(`Average cost per share for ${ticker}:`, h.costBasis);
+    if(newCost===null) return;
+    const costNum = parseFloat(newCost);
+    if(isNaN(costNum) || costNum<0){ alert('Enter a valid cost per share.'); return; }
+    h.shares = sharesNum;
+    h.costBasis = costNum;
+    save(); renderHero(); renderHoldings(); renderAllocation(); renderDiversify(); renderPerf();
+  }
+
+  function renderHero(){
+    if(holdings.length===0){
+      $('totalValue').textContent = 'Add a holding to begin';
+      $('totalValue').classList.add('placeholder-amt');
+      $('dayChange').textContent='—'; $('totalGain').textContent='—';
+      $('holdingCount').textContent='0';
+      return;
+    }
+    $('totalValue').classList.remove('placeholder-amt');
+    const vals = holdings.map(holdingValuation);
+    if(vals.some(v=>v.valueEUR===null)){
+      $('totalValue').textContent = 'Data unavailable';
+      $('dayChange').textContent='—'; $('totalGain').textContent='—';
+      $('holdingCount').textContent = holdings.length;
+      return;
+    }
+    const total = vals.reduce((s,v)=>s+v.valueEUR,0);
+    const prevTotal = vals.reduce((s,v)=>s+(v.prevEUR ?? v.valueEUR),0);
+    const costTotal = vals.reduce((s,v)=>s+(v.costEUR ?? 0),0);
+    $('totalValue').textContent = fmtEUR(total);
+    const dayDelta = total-prevTotal;
+    const dayPct = prevTotal? (dayDelta/prevTotal*100):0;
+    const dEl = $('dayChange');
+    dEl.textContent = `${fmtEUR(dayDelta)} (${fmtPct(dayPct)})`;
+    dEl.className = 'v ' + (dayDelta>=0?'pos':'neg');
+    const gainDelta = total-costTotal;
+    const gainPct = costTotal? (gainDelta/costTotal*100):0;
+    const gEl = $('totalGain');
+    gEl.textContent = `${fmtEUR(gainDelta)} (${fmtPct(gainPct)})`;
+    gEl.className = 'v ' + (gainDelta>=0?'pos':'neg');
+    $('holdingCount').textContent = holdings.length;
+  }
+
+  function renderHoldings(){
+    const wrap = $('holdingsTableWrap');
+    if(holdings.length===0){
+      wrap.innerHTML = '<div class="empty">No holdings yet — add your first one below.</div>';
+      return;
+    }
+    const vals = holdings.map(holdingValuation);
+    const totalVal = vals.every(v=>v.valueEUR!==null) ? vals.reduce((s,v)=>s+v.valueEUR,0) : 0;
+    const rows = holdings.map((h,i)=>{
+      const v = vals[i];
+      const price = v.p.price;
+      const info = v.info;
+      const gain = price!==null ? (price-h.costBasis)*h.shares : 0;
+      const gainPct = price!==null && h.costBasis ? ((price-h.costBasis)/h.costBasis*100) : 0;
+      const alloc = totalVal && v.valueEUR!==null ? (v.valueEUR/totalVal*100):0;
+      const name = (meta[h.ticker]||{}).name || info.name || '';
+      const priceCell = price!==null
+        ? `${fmtNative(price,info.currency)}${!v.p.live?'<span class="manual-tag">manual</span>':''}`
+        : `<input type="number" step="any" min="0" class="manual-price-input" data-t="${h.ticker}" placeholder="Set price">`;
+      return `<tr>
+        <td class="tick">${h.ticker}${name?`<span class="row-name">${escapeHtml(name)}</span>`:''}</td>
+        <td class="num">${h.shares}</td>
+        <td class="num">${priceCell}</td>
+        <td class="num">${v.valueEUR!==null?fmtEUR(v.valueEUR):'—'}</td>
+        <td class="num ${gain>=0?'pos':'neg'}">${price!==null?fmtNative(gain,info.currency)+' ('+fmtPct(gainPct)+')':'—'}</td>
+        <td class="num">${v.valueEUR!==null?alloc.toFixed(1)+'%':'—'}</td>
+        <td class="num row-actions">
+          <button class="del-btn" data-edit="${h.ticker}" aria-label="Edit ${h.ticker}">edit</button>
+          <button class="del-btn" data-t="${h.ticker}" aria-label="Remove ${h.ticker}">remove</button>
+        </td>
+      </tr>`;
+    }).join('');
+    wrap.innerHTML = `<table>
+      <thead><tr>
+        <th>Ticker</th><th class="num">Shares</th><th class="num">Price</th><th class="num">Value (EUR)</th>
+        <th class="num">Gain/loss</th><th class="num">Alloc.</th><th></th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+    wrap.querySelectorAll('.del-btn[data-t]').forEach(b=> b.onclick = ()=> removeHolding(b.dataset.t));
+    wrap.querySelectorAll('.del-btn[data-edit]').forEach(b=> b.onclick = ()=> editHolding(b.dataset.edit));
+    wrap.querySelectorAll('.manual-price-input').forEach(inp=>{
+      inp.addEventListener('change', ()=> setManualPrice(inp.dataset.t, inp.value));
     });
+  }
+
+  function renderWatchlist(){
+    const wrap = $('watchlistWrap');
+    if(watchlist.length===0){
+      wrap.innerHTML = '<div class="empty">No stocks on your watchlist yet.</div>';
+      return;
+    }
+    wrap.innerHTML = watchlist.map(t=>{
+      const q = quotes[t];
+      const info = getAssetInfo(t);
+      const price = q ? fmtNative(q.price, info.currency) : '—';
+      let pct=0, pctStr='—';
+      if(q && q.prevClose){ pct = (q.price-q.prevClose)/q.prevClose*100; pctStr = fmtPct(pct); }
+      return `<div class="watch-item">
+        <span class="watch-tick">${t}</span>
+        <span class="watch-price">
+          <span>${price}</span>
+          <span class="${pct>=0?'pos':'neg'}">${pctStr}</span>
+          <button class="del-btn" data-t="${t}">remove</button>
+        </span>
+      </div>`;
+    }).join('');
+    wrap.querySelectorAll('.del-btn').forEach(b=> b.onclick = ()=> removeWatch(b.dataset.t));
+  }
+
+  function renderAllocation(){
+    const wrap = $('allocationWrap');
+    if(holdings.length===0){
+      wrap.innerHTML = '<div class="empty">Add holdings to see how you\'re spread across sectors.</div>';
+      if(donutChart){ donutChart.destroy(); donutChart=null; }
+      return;
+    }
+    const bySector = {};
+    let total=0;
+    holdings.forEach(h=>{
+      const v=holdingValuation(h);
+      if(v.valueEUR===null) return;
+      const value = v.valueEUR;
+      const sector = (meta[h.ticker]||{}).sector || v.info.sector || 'Unclassified';
+      bySector[sector] = (bySector[sector]||0)+value;
+      total+=value;
+    });
+    const entries = Object.entries(bySector).sort((a,b)=>b[1]-a[1]);
+    const colors = entries.map((_,i)=>PALETTE[i % PALETTE.length]);
+
+    wrap.innerHTML = `<div class="allocation-grid">
+      <div class="donut-wrap">
+        <canvas id="allocDonut"></canvas>
+        <div class="donut-center"><span class="n">${entries.length}</span><span class="l">SECTOR${entries.length===1?'':'S'}</span></div>
+      </div>
+      <div class="allocation-list">${entries.map(([sector,val],i)=>{
+        const pct = total? val/total*100 : 0;
+        return `<div class="alloc-row">
+          <span class="alloc-dot" style="background:${colors[i]}"></span>
+          <span class="sector-name">${escapeHtml(sector)}</span>
+          <span class="alloc-pct">${pct.toFixed(1)}%</span>
+        </div>`;
+      }).join('')}</div>
+    </div>`;
+
+    const ctx = document.getElementById('allocDonut');
+    const data = entries.map(([,v])=>v);
+    if(donutChart){ donutChart.destroy(); }
+    donutChart = new Chart(ctx, {
+      type:'doughnut',
+      data:{ labels: entries.map(([s])=>s), datasets:[{ data, backgroundColor:colors, borderColor:'#F6F4EE', borderWidth:2 }] },
+      options:{
+        responsive:true, maintainAspectRatio:false, cutout:'68%',
+        plugins:{ legend:{display:false},
+          tooltip:{ callbacks:{ label: c => `${c.label}: ${(c.parsed/total*100).toFixed(1)}%` } } }
+      }
+    });
+  }
+
+  function renderDiversify(){
+    const wrap = $('diversifyWrap');
+    if(holdings.length===0){
+      wrap.innerHTML = '<div class="empty">Add holdings to see your concentration.</div>';
+      return;
+    }
+    let total=0;
+    const perTicker = holdings.map(h=>{
+      const v = holdingValuation(h);
+      const value = v.valueEUR===null ? 0 : v.valueEUR;
+      total += value;
+      return {ticker:h.ticker, name:(meta[h.ticker]||{}).name||v.info.name||h.ticker, value};
+    });
+    const bySector = {};
+    perTicker.forEach((row,i)=>{
+      const sector = (meta[holdings[i].ticker]||{}).sector || 'Unclassified';
+      bySector[sector] = (bySector[sector]||0)+row.value;
+    });
+    const items = [
+      ...perTicker.map(r=>({label:r.name, pct: total? r.value/total*100:0})),
+      ...Object.entries(bySector).map(([sector,val])=>({label:sector+' (sector)', pct: total? val/total*100:0}))
+    ].sort((a,b)=>b.pct-a.pct);
+    const flagged = items.filter(i=>i.pct>=threshold);
+    const rest = items.filter(i=>i.pct<threshold);
+    const toShow = [...flagged, ...rest.slice(0, Math.max(0, 6-flagged.length))];
+    wrap.innerHTML = `<div class="diversify-list">${toShow.map(i=>`
+      <div class="diversify-item ${i.pct>=threshold?'flag':''}">
+        <span class="di-label">${escapeHtml(i.label)}${i.pct>=threshold?' — concentrated':''}</span>
+        <span class="di-pct">${i.pct.toFixed(1)}%</span>
+      </div>`).join('')}</div>`;
+  }
+
+  function renderPerf(){
+    const ctx = document.getElementById('perfChart');
+    if(holdings.length===0){
+      if(perfChart){ perfChart.destroy(); perfChart=null; }
+      ctx.parentElement.style.height = '0px';
+      return;
+    }
+    ctx.parentElement.style.height = Math.max(120, holdings.length*42) + 'px';
+    const rows = holdings.map(h=>{
+      const p = getPrice(h);
+      const pct = p.price!==null && h.costBasis ? ((p.price-h.costBasis)/h.costBasis*100) : 0;
+      return {ticker:h.ticker, pct};
+    });
+    const labels = rows.map(r=>r.ticker);
+    const data = rows.map(r=>Number(r.pct.toFixed(2)));
+    const colors = data.map(v=> v>=0 ? '#2F5233' : '#8C3A2E');
+    if(perfChart){
+      perfChart.data.labels = labels;
+      perfChart.data.datasets[0].data = data;
+      perfChart.data.datasets[0].backgroundColor = colors;
+      perfChart.update();
+      return;
+    }
+    perfChart = new Chart(ctx, {
+      type:'bar',
+      data:{ labels, datasets:[{ data, backgroundColor:colors, borderRadius:3, barThickness:16 }] },
+      options:{
+        indexAxis:'y', responsive:true, maintainAspectRatio:false,
+        plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label: c => fmtPct(c.parsed.x) } } },
+        scales:{
+          x:{ grid:{color:'#DBD5C4'}, ticks:{ font:{family:'IBM Plex Mono', size:10}, color:'#5B584F', callback:v=>v+'%' } },
+          y:{ grid:{display:false}, ticks:{ font:{family:'IBM Plex Mono', size:11, weight:600}, color:'#1C1B18' } }
+        }
+      }
+    });
+  }
+
+  function renderChart(){
+    const ctx = document.getElementById('historyChart');
+    if(history.length===0){
+      if(chart){ chart.destroy(); chart=null; }
+      return;
+    }
+    const labels = history.map(h=>h.date.slice(5));
+    const data = history.map(h=>h.value);
+    if(chart){
+      chart.data.labels = labels;
+      chart.data.datasets[0].data = data;
+      chart.update();
+      return;
+    }
+    chart = new Chart(ctx, {
+      type:'line',
+      data:{ labels, datasets:[{
+        data, borderColor:'#A6803D', backgroundColor:'rgba(166,128,61,0.08)',
+        borderWidth:2, pointRadius:0, fill:true, tension:0.15
+      }]},
+      options:{
+        responsive:true, maintainAspectRatio:false,
+        plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label: c => fmt$(c.parsed.y) } } },
+        scales:{
+          x:{ grid:{display:false}, ticks:{ font:{family:'IBM Plex Mono', size:10}, color:'#5B584F' } },
+          y:{ grid:{color:'#DBD5C4'}, ticks:{ font:{family:'IBM Plex Mono', size:10}, color:'#5B584F',
+              callback: v => '$'+v.toLocaleString() } }
+        }
+      }
+    });
+  }
+
+  function escapeHtml(s){
+    return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+
+  // ---------- AI Portfolio Intelligence ----------
+  const AI_ENDPOINT = 'https://money-portfolio-topaz.vercel.app/api/analyze';
+
+  function buildAIData(){
+    const valuations = holdings.map(holdingValuation);
+    const totalValue = valuations.every(v=>v.valueEUR!==null)
+      ? valuations.reduce((sum,v)=>sum+v.valueEUR,0)
+      : null;
+
+    const portfolio = holdings.map((h,i)=>{
+      const v=valuations[i];
+      const price = v.nativePrice;
+      const value = v.valueEUR;
+      const allocation = totalValue && value!==null ? (value/totalValue*100) : null;
+      const gainNative = price!==null ? (price-h.costBasis)*h.shares : null;
+      const gainEUR = toEUR(gainNative, v.info.currency);
+      return {
+        ticker:h.ticker,
+        marketSymbol:v.info.marketSymbol,
+        currency:v.info.currency,
+        name:(meta[h.ticker]||{}).name||v.info.name||h.ticker,
+        sector:(meta[h.ticker]||{}).sector||v.info.sector||'Unclassified',
+        shares:h.shares,
+        costBasis:Number(h.costBasis),
+        price:price===null?null:Number(price),
+        valueEUR:value===null?null:Number(value),
+        allocation:allocation===null?null:Number(allocation),
+        gainLossEUR:gainEUR===null?null:Number(gainEUR),
+        gainLossPct:price!==null && h.costBasis ? Number(((price-h.costBasis)/h.costBasis*100)) : null
+      };
+    });
+
+    const watch = watchlist.map(t=>{
+      const q=quotes[t];
+      const info=getAssetInfo(t);
+      return {
+        ticker:t,
+        marketSymbol:info.marketSymbol,
+        currency:info.currency,
+        price:q ? Number(q.price) : null,
+        dayChangePct:q && q.prevClose ? Number(((q.price-q.prevClose)/q.prevClose*100)) : null,
+        name:(meta[t]||{}).name||info.name||t,
+        sector:(meta[t]||{}).sector||info.sector||'Unclassified'
+      };
+    });
+
+    return {
+      currency:'EUR',
+      fx:{EUR:1, USD:fxRates.USD},
+      monthlyContribution:Number(parseFloat($('monthlyContribution').value)||0),
+      concentrationThreshold:Number(threshold),
+      totalPortfolioValue:totalValue===null?null:Number(totalValue),
+      holdings:portfolio,
+      watchlist:watch,
+      note:'All portfolio allocations and total values are normalized to EUR. VUAA is mapped to VUAA.MI and treated as EUR-listed. FX is supplied by the Ledger backend. Do not assume missing market/fundamental/news data.'
+    };
+  }
+
+  function escapeAI(s){
+    return escapeHtml(String(s ?? ''));
+  }
+
+  function renderAIResult(result){
+    const action = result.monthlyDecision || 'REVIEW';
+    const amount = result.recommendedAmount ?? 0;
+    const score = result.portfolioScore ?? '—';
+    const asset = result.recommendedTicker || result.ticker || '—';
+
+    const holdings = Array.isArray(result.holdings) ? result.holdings : [];
+    const risks = Array.isArray(result.risks) ? result.risks : [];
+
+    $('aiResult').className = '';
+    $('aiResult').innerHTML = `
+      <div class="ai-grid">
+        <div class="ai-card"><div class="ai-label">Monthly decision</div><div class="ai-value">${escapeAI(action)}</div></div>
+        <div class="ai-card"><div class="ai-label">Suggested amount</div><div class="ai-value">€${Number(amount||0).toFixed(2)}</div></div>
+        <div class="ai-card"><div class="ai-label">Portfolio score</div><div class="ai-value">${escapeAI(score)}/100</div></div>
+        <div class="ai-card"><div class="ai-label">Suggested asset</div><div class="ai-value">${escapeAI(asset)}</div></div>
+      </div>
+      <div class="ai-reason"><strong>Reasoning:</strong> ${escapeAI(result.reasoning || 'No reasoning returned.')}</div>
+      ${holdings.length ? `
+        <div class="ai-holdings">
+          <table>
+            <thead><tr><th>Ticker</th><th class="num">Score</th><th>Action</th><th>Reason</th></tr></thead>
+            <tbody>${holdings.map(h=>`
+              <tr>
+                <td class="tick">${escapeAI(h.ticker)}</td>
+                <td class="num">${escapeAI(h.score)}/100</td>
+                <td><span class="ai-badge">${escapeAI(h.action)}</span></td>
+                <td>${escapeAI(h.reason)}</td>
+              </tr>`).join('')}</tbody>
+          </table>
+        </div>` : ''}
+      ${risks.length ? `<ul class="ai-list">${risks.map(r=>`<li>${escapeAI(r)}</li>`).join('')}</ul>` : ''}
+      <div style="margin-top:14px;font-size:11.5px;color:var(--ink-soft);">
+        AI analysis is decision support based on the data supplied to it; it is not a guarantee of returns or a substitute for professional financial advice.
+      </div>
+    `;
+  }
+
+  async function analyzePortfolio(){
+    const btn=$('analyzeBtn');
+    const status=$('aiStatus');
+    const result=$('aiResult');
+
+    btn.disabled=true;
+    btn.textContent='Analyzing…';
+    status.textContent='sending portfolio data…';
+    result.className='empty';
+    result.textContent='Analyzing your current portfolio…';
+
+    try{
+      const res=await fetch(AI_ENDPOINT,{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify(buildAIData())
+      });
+
+      const data=await res.json();
+      if(!res.ok) throw new Error(data.error || 'AI request failed');
+
+      renderAIResult(data);
+      status.textContent='analysis updated';
+    }catch(e){
+      result.className='empty ai-error';
+      result.textContent='AI analysis failed: ' + e.message;
+      status.textContent='error';
+    }finally{
+      btn.disabled=false;
+      btn.textContent='Analyze portfolio';
+    }
+  }
+
+  $('analyzeBtn').onclick = analyzePortfolio;
+
+  // ---------- Init ----------
+  function init(){
+    $('thresholdInput').value = threshold;
+    $('thresholdInput').addEventListener('change', ()=>{
+      const v = parseFloat($('thresholdInput').value);
+      threshold = isNaN(v) ? 30 : v;
+      localStorage.setItem(LS_THRESHOLD, String(threshold));
+      renderDiversify();
+    });
+    renderHoldings(); renderWatchlist(); renderHero(); renderAllocation(); renderDiversify(); renderPerf(); renderChart();
+    if(!apiKey){
+      $('apiHint').textContent = 'Add a free API key (⚙) to load live prices';
+    }
+    refreshAll();
+    refreshTimer = setInterval(refreshAll, 30000);
+  }
+  init();
+})();
+</script>
+</body>
+</html>
+
     renderHoldings(); renderWatchlist(); renderHero(); renderAllocation(); renderDiversify(); renderPerf(); renderChart();
     if(!apiKey){
       $('apiHint').textContent = 'Add a free API key (⚙) to load live prices';
