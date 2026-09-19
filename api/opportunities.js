@@ -43,6 +43,11 @@ module.exports = async (req,res) => {
   try {
     const input=req.body||{};
     if(!Array.isArray(input.holdings)||!Array.isArray(input.candidates)) return send(res,400,{error:"Invalid portfolio or candidate data."});
+    // HARD BROKER GATE: the AI never receives an unconfirmed instrument.
+    // Availability must have been explicitly confirmed by the user after checking
+    // the exact instrument in Revolut Invest.
+    input.candidates = input.candidates.filter(c => c && c.revolutConfirmed === true && c.availability === 'confirmed');
+    if(!input.candidates.length) return send(res,200,{summary:"No Revolut-confirmed candidates are available for this scan.",dataQuality:"LOW",opportunities:[],researchNotes:["Unconfirmed instruments were excluded before AI analysis because Revolut availability must be verified in the app."]});
     const prompt=`You are Ledger's Phase 2 opportunity-research engine. Provide neutral, risk-aware research support using ONLY the supplied portfolio, live market data, fundamentals, and recent news.
 
 IMPORTANT DATA RULES:
@@ -62,10 +67,10 @@ SCORING:
 - CONSIDER = plausible candidate for further review; WATCH = worth monitoring but insufficient support or fit for immediate consideration; PASS = weak fit or data-supported reason to deprioritize.
 - Compare every supplied candidate exactly once.
 
-BROKER:
-- availability='confirmed_existing' means the user already owns it.
-- availability='confirmed' means explicitly verified by the user/app.
-- availability='verify_in_app' is NOT confirmed executable availability. If such a candidate scores well, say it must be checked in Revolut before acting.
+BROKER HARD GATE:
+- Every candidate in the supplied input has already passed an explicit Revolut availability check.
+- Do not discuss or score unconfirmed instruments because they are excluded before this AI call.
+- Treat the supplied candidate set as the user's actionable Revolut universe for this scan.
 
 Return only the structured output.`;
     const response=await fetch("https://api.openai.com/v1/responses",{
@@ -85,12 +90,8 @@ Return only the structured output.`;
       .map(o=>{
         const ticker=String(o.ticker).toUpperCase();
         const c=candidateMap.get(ticker)||{};
-        // The client-side availability string is descriptive only. Actionability is gated
-        // by the explicit boolean confirmation flag, which the UI sets only after
-        // the user confirms the exact instrument in Revolut.
-        const confirmed=c.revolutConfirmed===true;
         const requestedAction=["CONSIDER","WATCH","PASS"].includes(o.action)?o.action:"WATCH";
-        return {ticker,assetScore:Math.max(0,Math.min(100,Number(o.assetScore)||0)),portfolioFit:Math.max(0,Math.min(100,Number(o.portfolioFit)||0)),action:confirmed?requestedAction:"WATCH",reason:String(o.reason||"")+(confirmed?"":" Revolut availability is not confirmed; verify the exact instrument in Revolut before treating this as actionable."),dataUsed:Array.isArray(o.dataUsed)?o.dataUsed.map(String):[]};
+        return {ticker,assetScore:Math.max(0,Math.min(100,Number(o.assetScore)||0)),portfolioFit:Math.max(0,Math.min(100,Number(o.portfolioFit)||0)),action:requestedAction,reason:String(o.reason||""),dataUsed:Array.isArray(o.dataUsed)?o.dataUsed.map(String):[]};
       });
     result.summary=String(result.summary||"");
     result.researchNotes=Array.isArray(result.researchNotes)?result.researchNotes.map(String):[];
