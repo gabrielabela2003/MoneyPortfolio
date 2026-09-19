@@ -254,6 +254,16 @@
   .currency-note{font-size:11.5px;color:var(--ink-soft);margin-top:8px;line-height:1.45;}
   @media(max-width:640px){.ai-grid{grid-template-columns:1fr;}}
 
+
+  .opp-controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:10px;}
+  .opp-status{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--ink-soft);}
+  .opp-grid{margin-top:14px;width:100%;overflow:auto;}
+  .opp-grid table{min-width:760px;}
+  .opp-grid .score{font-family:'IBM Plex Mono',monospace;white-space:nowrap;}
+  .opp-badge{display:inline-block;padding:3px 7px;border:1px solid var(--rule);border-radius:4px;font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:600;}
+  .opp-reason{min-width:260px;}
+  .opp-note{font-size:11.5px;color:var(--ink-soft);margin-top:10px;line-height:1.45;}
+
 </style>
 </head>
 <body>
@@ -362,6 +372,21 @@
 
     <div id="aiResult" class="empty">
       Click <strong>Analyze portfolio</strong> to get a portfolio-aware AI analysis.
+    </div>
+  </section>
+
+  <section class="section" id="opportunitySection">
+    <div class="section-head">
+      <h2>AI Opportunity Scanner</h2>
+      <span class="hint" id="oppStatus">Not scanned yet</span>
+    </div>
+    <div class="opp-controls">
+      <button class="btn" id="scanOppBtn">Scan opportunities</button>
+      <span class="opp-status">Uses a small built-in candidate universe plus your current portfolio.</span>
+    </div>
+    <div id="opportunityWrap"><div class="empty">Run a scan to see assets that may complement your portfolio.</div></div>
+    <div class="opp-note">
+      This scanner is portfolio-fit research, not a prediction engine. It only uses the market data Ledger can retrieve plus the supplied portfolio structure; it does not invent valuation, news, or fundamental data.
     </div>
   </section>
 
@@ -914,6 +939,24 @@
 
   // ---------- AI Portfolio Intelligence ----------
   const AI_ENDPOINT = 'https://money-portfolio-topaz.vercel.app/api/analyze';
+  const OPPORTUNITY_ENDPOINT = 'https://money-portfolio-topaz.vercel.app/api/opportunities';
+
+  // Phase 2 starts with a deliberately small, transparent universe.
+  // We can expand this later once the scanner is proven reliable.
+  const OPPORTUNITY_UNIVERSE = {
+    VOO:{name:'Vanguard S&P 500 ETF',sector:'US Large Cap ETF'},
+    VTI:{name:'Vanguard Total Stock Market ETF',sector:'US Total Market ETF'},
+    VXUS:{name:'Vanguard Total International Stock ETF',sector:'International Equity ETF'},
+    QQQ:{name:'Invesco QQQ Trust',sector:'US Growth / Technology ETF'},
+    SCHD:{name:'Schwab U.S. Dividend Equity ETF',sector:'US Dividend Equity ETF'},
+    IWM:{name:'iShares Russell 2000 ETF',sector:'US Small Cap ETF'},
+    XLV:{name:'Health Care Select Sector SPDR Fund',sector:'US Healthcare ETF'},
+    XLI:{name:'Industrial Select Sector SPDR Fund',sector:'US Industrials ETF'},
+    XLP:{name:'Consumer Staples Select Sector SPDR Fund',sector:'US Consumer Staples ETF'},
+    VNQ:{name:'Vanguard Real Estate ETF',sector:'US Real Estate ETF'},
+    BND:{name:'Vanguard Total Bond Market ETF',sector:'US Bond ETF'},
+    GLD:{name:'SPDR Gold Shares',sector:'Gold ETF'}
+  };
 
   function buildAIData(){
     const valuations = holdings.map(holdingValuation);
@@ -1013,6 +1056,85 @@
     `;
   }
 
+  function buildOpportunityData(){
+    const valuations = holdings.map(holdingValuation);
+    const totalValue = valuations.every(v=>v.valueEUR!==null)
+      ? valuations.reduce((sum,v)=>sum+v.valueEUR,0) : null;
+    const current = holdings.map((h,i)=>{
+      const v=valuations[i];
+      const value=v.valueEUR;
+      return {
+        ticker:h.ticker,
+        name:(meta[h.ticker]||{}).name||v.info.name||h.ticker,
+        sector:(meta[h.ticker]||{}).sector||v.info.sector||'Unclassified',
+        allocation: totalValue && value!==null ? Number(value/totalValue*100) : null,
+        valueEUR:value===null?null:Number(value)
+      };
+    });
+
+    const candidates = Object.entries(OPPORTUNITY_UNIVERSE).map(([ticker,info])=>{
+      const q=quotes[ticker];
+      return {
+        ticker, name:info.name, sector:info.sector,
+        price:q ? Number(q.price) : null,
+        dayChangePct:q && q.prevClose ? Number((q.price-q.prevClose)/q.prevClose*100) : null
+      };
+    });
+    return {
+      currency:'EUR',
+      fx:{EUR:1,USD:fxRates.USD},
+      totalPortfolioValue:totalValue===null?null:Number(totalValue),
+      concentrationThreshold:Number(threshold),
+      holdings:current,
+      candidates,
+      monthlyContribution:Number(parseFloat($('monthlyContribution').value)||0)
+    };
+  }
+
+  function renderOpportunityResult(result){
+    const rows=Array.isArray(result.opportunities)?result.opportunities:[];
+    const wrap=$('opportunityWrap');
+    if(!rows.length){ wrap.className='empty'; wrap.textContent='No usable candidates were returned.'; return; }
+    wrap.className='';
+    wrap.innerHTML=`<div class="opp-grid"><table>
+      <thead><tr><th>Ticker</th><th class="num">Asset score</th><th class="num">Portfolio fit</th><th>Action</th><th>Reason</th><th></th></tr></thead>
+      <tbody>${rows.map(o=>`<tr>
+        <td class="tick">${escapeAI(o.ticker)}</td>
+        <td class="score">${escapeAI(o.assetScore)}/100</td>
+        <td class="score">${escapeAI(o.portfolioFit)}/100</td>
+        <td><span class="opp-badge">${escapeAI(o.action)}</span></td>
+        <td class="opp-reason">${escapeAI(o.reason)}</td>
+        <td><button class="btn ghost opp-add" data-ticker="${escapeHtml(o.ticker)}">Add to watchlist</button></td>
+      </tr>`).join('')}</tbody>
+    </table></div>
+    ${result.summary?`<div class="ai-reason"><strong>Scanner summary:</strong> ${escapeAI(result.summary)}</div>`:''}`;
+    wrap.querySelectorAll('.opp-add').forEach(btn=>btn.onclick=()=>{
+      const t=btn.dataset.ticker;
+      if(!watchlist.includes(t)){watchlist.push(t);save();renderWatchlist();}
+      btn.textContent='Added'; btn.disabled=true;
+    });
+  }
+
+  async function scanOpportunities(){
+    const btn=$('scanOppBtn'), status=$('oppStatus'), wrap=$('opportunityWrap');
+    btn.disabled=true; btn.textContent='Scanning…'; status.textContent='loading candidate prices…';
+    try{
+      if(!apiKey) throw new Error('Add your Finnhub API key in Settings first.');
+      const candidates=Object.keys(OPPORTUNITY_UNIVERSE);
+      for(const t of candidates){
+        try{ quotes[t]=await fetchQuote(t); }catch(e){ quotes[t]=null; }
+      }
+      status.textContent='sending candidates to AI…';
+      const res=await fetch(OPPORTUNITY_ENDPOINT,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(buildOpportunityData())});
+      const data=await res.json();
+      if(!res.ok) throw new Error(data.error||'Opportunity scan failed');
+      renderOpportunityResult(data);
+      status.textContent=`scan updated · ${Array.isArray(data.opportunities)?data.opportunities.length:0} candidates`;
+    }catch(e){
+      wrap.className='empty ai-error'; wrap.textContent='Opportunity scan failed: '+e.message; status.textContent='error';
+    }finally{ btn.disabled=false; btn.textContent='Scan opportunities'; }
+  }
+
   async function analyzePortfolio(){
     const btn=$('analyzeBtn');
     const status=$('aiStatus');
@@ -1047,6 +1169,7 @@
   }
 
   $('analyzeBtn').onclick = analyzePortfolio;
+  $('scanOppBtn').onclick = scanOpportunities;
 
   // ---------- Init ----------
   function init(){
