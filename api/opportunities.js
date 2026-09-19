@@ -85,7 +85,10 @@ Return only the structured output.`;
       .map(o=>{
         const ticker=String(o.ticker).toUpperCase();
         const c=candidateMap.get(ticker)||{};
-        const confirmed=c.revolutConfirmed===true || c.availability==='confirmed' || c.availability==='confirmed_existing';
+        // The client-side availability string is descriptive only. Actionability is gated
+        // by the explicit boolean confirmation flag, which the UI sets only after
+        // the user confirms the exact instrument in Revolut.
+        const confirmed=c.revolutConfirmed===true;
         const requestedAction=["CONSIDER","WATCH","PASS"].includes(o.action)?o.action:"WATCH";
         return {ticker,assetScore:Math.max(0,Math.min(100,Number(o.assetScore)||0)),portfolioFit:Math.max(0,Math.min(100,Number(o.portfolioFit)||0)),action:confirmed?requestedAction:"WATCH",reason:String(o.reason||"")+(confirmed?"":" Revolut availability is not confirmed; verify the exact instrument in Revolut before treating this as actionable."),dataUsed:Array.isArray(o.dataUsed)?o.dataUsed.map(String):[]};
       });
