@@ -8,124 +8,85 @@ function corsHeaders() {
     "Content-Type": "application/json"
   };
 }
-
 function send(res, status, body) {
-  Object.entries(corsHeaders()).forEach(([k, v]) => res.setHeader(k, v));
+  Object.entries(corsHeaders()).forEach(([k,v]) => res.setHeader(k,v));
   return res.status(status).json(body);
 }
-
 function extractText(data) {
   if (typeof data?.output_text === "string" && data.output_text.trim()) return data.output_text.trim();
-  const chunks = [];
-  for (const item of (data?.output || [])) {
-    for (const content of (item?.content || [])) {
-      if (typeof content?.text === "string") chunks.push(content.text);
-    }
+  const chunks=[];
+  for (const item of (data?.output || [])) for (const content of (item?.content || [])) {
+    if (typeof content?.text === "string") chunks.push(content.text);
   }
   return chunks.join("\n").trim();
 }
 
-function parseJSON(text) {
-  try { return JSON.parse(text); } catch (_) {}
-  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
-  if (fenced) return JSON.parse(fenced[1]);
-  const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  if (start >= 0 && end > start) return JSON.parse(text.slice(start, end + 1));
-  throw new Error("The AI returned an invalid JSON response.");
-}
+const SCHEMA = {
+  type:"object", additionalProperties:false,
+  properties:{
+    summary:{type:"string"},
+    dataQuality:{type:"string", enum:["HIGH","MEDIUM","LOW"]},
+    opportunities:{type:"array", items:{type:"object", additionalProperties:false, properties:{
+      ticker:{type:"string"}, assetScore:{type:"number"}, portfolioFit:{type:"number"},
+      action:{type:"string",enum:["CONSIDER","WATCH","PASS"]},
+      reason:{type:"string"}, dataUsed:{type:"array",items:{type:"string"}}
+    }, required:["ticker","assetScore","portfolioFit","action","reason","dataUsed"]}},
+    researchNotes:{type:"array",items:{type:"string"}}
+  },
+  required:["summary","dataQuality","opportunities","researchNotes"]
+};
 
-module.exports = async (req, res) => {
-  if (req.method === "OPTIONS") {
-    Object.entries(corsHeaders()).forEach(([k, v]) => res.setHeader(k, v));
-    return res.status(204).end();
-  }
-  if (req.method !== "POST") return send(res, 405, { error: "POST only" });
-  if (!process.env.OPENAI_API_KEY) return send(res, 500, { error: "OPENAI_API_KEY is not configured in Vercel." });
-
+module.exports = async (req,res) => {
+  if(req.method === "OPTIONS") return send(res,204,{});
+  if(req.method !== "POST") return send(res,405,{error:"POST only"});
+  if(!process.env.OPENAI_API_KEY) return send(res,500,{error:"OPENAI_API_KEY is not configured in Vercel."});
   try {
-    const input = req.body || {};
-    if (!Array.isArray(input.holdings) || !Array.isArray(input.candidates)) {
-      return send(res, 400, { error: "Invalid portfolio or candidate data." });
-    }
+    const input=req.body||{};
+    if(!Array.isArray(input.holdings)||!Array.isArray(input.candidates)) return send(res,400,{error:"Invalid portfolio or candidate data."});
+    const prompt=`You are Ledger's Phase 2 opportunity-research engine. Provide neutral, risk-aware research support using ONLY the supplied portfolio, live market data, fundamentals, and recent news.
 
-    const systemPrompt = `
-You are the opportunity-scanning engine for Ledger, a personal portfolio tracker.
+IMPORTANT DATA RULES:
+- Do not invent any number, valuation, fundamental, news item, forecast, analyst view, or ETF characteristic.
+- A missing metric is genuinely missing; do not fill it from memory.
+- Recent price movement is context, NOT a standalone buy signal.
+- News is evidence/context, not a trading signal by itself. Distinguish reported facts from interpretations.
+- ETF candidates may have quote/metadata/news but no company fundamentals. Do not penalize an ETF merely because stock-style metrics are unavailable.
+- Do not claim a candidate is attractive "right now" solely from a high score.
+- Portfolio fit considers current allocation, concentration, sector/geographic/asset-class overlap, and diversification.
+- The user's final decision remains their own.
 
-Provide neutral, risk-aware research support using ONLY the supplied portfolio and candidate data.
-Do not claim certainty or guaranteed profit. Do not invent current fundamentals, valuation metrics,
-news, analyst ratings, forecasts, ETF holdings, or facts that are not supplied.
+SCORING:
+- assetScore 0-100 = quality/interestingness based on supplied live data and static metadata. If data is sparse, lower confidence and avoid false precision.
+- portfolioFit 0-100 = suitability as a complement to this specific portfolio. A strong asset can have low fit when it overlaps or is already oversized.
+- CONSIDER = plausible candidate for further review; WATCH = worth monitoring but insufficient support or fit for immediate consideration; PASS = weak fit or data-supported reason to deprioritize.
+- Compare every supplied candidate exactly once.
 
-The purpose is to identify candidates that may COMPLEMENT the user's existing portfolio.
-This is not a prediction contest and the highest score is not a guarantee of performance.
+BROKER:
+- availability='confirmed_existing' means the user already owns it.
+- availability='confirmed' means explicitly verified by the user/app.
+- availability='verify_in_app' is NOT confirmed executable availability. If such a candidate scores well, say it must be checked in Revolut before acting.
 
-For each candidate:
-- assetScore 0-100 = how interesting the candidate is based on the supplied data only.
-- portfolioFit 0-100 = how suitable adding the candidate would be for this specific portfolio.
-- action = CONSIDER, WATCH, or PASS.
-- reason = concise explanation tied to supplied facts.
-
-Portfolio-fit rules:
-- Use current allocation, sector exposure, concentration threshold, and candidate sector.
-- Prefer candidates that can reduce concentration or add a materially different exposure when the
-  supplied data supports that conclusion.
-- A candidate that overlaps heavily with the user's existing exposure can have a lower portfolioFit
-  even if its assetScore is higher.
-- Do not assume that an ETF is automatically diversified enough for this portfolio.
-- Do not penalize a candidate merely because it has a positive or negative day change; daily movement
-  is context, not a buy signal.
-- If the available data is too limited to distinguish candidates confidently, say so and use WATCH.
-- Never invent a ticker that was not supplied.
-- Do not automatically recommend buying anything; the user makes the final decision.
-
-Return only valid JSON:
-{
-  "summary":"short scanner summary",
-  "opportunities":[
-    {"ticker":"VOO","assetScore":0,"portfolioFit":0,"action":"CONSIDER | WATCH | PASS","reason":"short reason"}
-  ]
-}
-`;
-
-    const response = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        model: "gpt-5.6",
-        input: [
-          { role: "system", content: [{ type: "input_text", text: systemPrompt }] },
-          { role: "user", content: [{ type: "input_text", text: JSON.stringify(input) }] }
-        ]
-      })
+Return only the structured output.`;
+    const response=await fetch("https://api.openai.com/v1/responses",{
+      method:"POST",headers:{"Authorization":`Bearer ${process.env.OPENAI_API_KEY}`,"Content-Type":"application/json"},
+      body:JSON.stringify({model:"gpt-5.6",input:[
+        {role:"system",content:[{type:"input_text",text:prompt}]},
+        {role:"user",content:[{type:"input_text",text:JSON.stringify(input)}]}
+      ],text:{format:{type:"json_schema",name:"ledger_opportunity_research",strict:true,schema:SCHEMA}}})
     });
-
-    const data = await response.json();
-    if (!response.ok) {
-      console.error("OpenAI opportunity error:", data);
-      return send(res, response.status, { error: data?.error?.message || "Opportunity scan failed." });
-    }
-
-    const result = parseJSON(extractText(data));
-    const validTickers = new Set(input.candidates.map(c => String(c?.ticker || "").toUpperCase()));
-    const opportunities = Array.isArray(result.opportunities) ? result.opportunities : [];
-
-    result.opportunities = opportunities
-      .filter(o => validTickers.has(String(o?.ticker || "").toUpperCase()))
-      .map(o => ({
-        ticker: String(o.ticker).toUpperCase(),
-        assetScore: Math.max(0, Math.min(100, Number(o.assetScore) || 0)),
-        portfolioFit: Math.max(0, Math.min(100, Number(o.portfolioFit) || 0)),
-        action: ["CONSIDER", "WATCH", "PASS"].includes(o.action) ? o.action : "WATCH",
-        reason: String(o.reason || "")
-      }));
-
-    result.summary = String(result.summary || "");
-    return send(res, 200, result);
-  } catch (error) {
-    console.error("Opportunity function error:", error);
-    return send(res, 500, { error: error.message || "Internal server error." });
+    const data=await response.json();
+    if(!response.ok) return send(res,response.status,{error:data?.error?.message||"Opportunity research failed."});
+    const result=JSON.parse(extractText(data));
+    const valid=new Set(input.candidates.map(c=>String(c?.ticker||"").toUpperCase()));
+    result.opportunities=(Array.isArray(result.opportunities)?result.opportunities:[])
+      .filter(o=>valid.has(String(o?.ticker||"").toUpperCase()))
+      .map(o=>({ticker:String(o.ticker).toUpperCase(),assetScore:Math.max(0,Math.min(100,Number(o.assetScore)||0)),portfolioFit:Math.max(0,Math.min(100,Number(o.portfolioFit)||0)),action:["CONSIDER","WATCH","PASS"].includes(o.action)?o.action:"WATCH",reason:String(o.reason||""),dataUsed:Array.isArray(o.dataUsed)?o.dataUsed.map(String):[]}));
+    result.summary=String(result.summary||"");
+    result.researchNotes=Array.isArray(result.researchNotes)?result.researchNotes.map(String):[];
+    if(!["HIGH","MEDIUM","LOW"].includes(result.dataQuality)) result.dataQuality="LOW";
+    return send(res,200,result);
+  } catch(e) {
+    console.error("Opportunity research error:",e);
+    return send(res,500,{error:e.message||"Internal server error."});
   }
 };
