@@ -133,6 +133,12 @@ B) FAIR CANDIDATE COMPARISON
 - Use candidatePool.currentAllocation as the authoritative current portfolio weight.
 - Use candidatePool.postAllocation as the portfolio weight if the FULL monthly contribution were
   directed to that candidate. This is a deterministic scenario supplied by Ledger.
+- Ledger also supplies concentrationThreshold and fullContributionBreachesThreshold for each candidate.
+- Treat fullContributionBreachesThreshold as authoritative. Do NOT recalculate the threshold using
+  contribution/current portfolio value or any other shortcut. A candidate only breaches the threshold
+  under the full-contribution scenario when the supplied boolean is true.
+- For example, if postAllocation is 29.0% and the supplied threshold is 30%, that candidate does NOT
+  breach the threshold, even if the contribution is large relative to the current portfolio.
 - Consider allocation change, concentration, sector/geographic/asset-class overlap, and diversification.
 - A candidate already owned may have currentAllocation > 0; a new candidate normally has 0%.
 - Existing ownership is not inherently positive or negative.
@@ -156,7 +162,8 @@ C) MONTHLY CONTRIBUTION DECISION
 - If an existing holding has the best portfolio fit, it may be recommended.
 - If a watchlist/scanner candidate has the best portfolio fit, it may be recommended instead.
 - If no candidate is sufficiently supported by the supplied data, WAIT is valid.
-- A large contribution relative to the portfolio can justify PARTIAL/staging.
+- A large contribution relative to the portfolio can justify PARTIAL/staging, but do not describe
+  the contribution as breaching a concentration threshold unless the supplied boolean says it does.
 - If WAIT, recommendedAmount must be 0 and recommendedTicker should normally be null.
 - If INVEST, use the full contribution only when the supplied data supports full deployment.
 - PARTIAL means some deployment is supported but full deployment is not.
