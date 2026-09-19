@@ -35,6 +35,53 @@ function parseJSON(text) {
   throw new Error("The AI returned an invalid JSON response.");
 }
 
+const RESPONSE_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    portfolioScore: { type: "number" },
+    monthlyDecision: { type: "string", enum: ["INVEST", "PARTIAL", "WAIT"] },
+    recommendedAmount: { type: "number" },
+    recommendedTicker: { type: ["string", "null"] },
+    reasoning: { type: "string" },
+    risks: { type: "array", items: { type: "string" } },
+    holdings: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          ticker: { type: "string" },
+          score: { type: "number" },
+          portfolioFit: { type: "number" },
+          action: { type: "string", enum: ["BUY", "HOLD", "REDUCE", "SELL"] },
+          reason: { type: "string" }
+        },
+        required: ["ticker", "score", "portfolioFit", "action", "reason"]
+      }
+    },
+    candidateComparison: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          ticker: { type: "string" },
+          source: { type: "string", enum: ["existing", "watchlist", "scanner"] },
+          assetScore: { type: "number" },
+          portfolioFit: { type: "number" },
+          currentAllocation: { type: "number" },
+          postAllocation: { type: "number" },
+          action: { type: "string", enum: ["CONSIDER", "HOLD", "WATCH", "PASS"] },
+          reason: { type: "string" }
+        },
+        required: ["ticker", "source", "assetScore", "portfolioFit", "currentAllocation", "postAllocation", "action", "reason"]
+      }
+    }
+  },
+  required: ["portfolioScore", "monthlyDecision", "recommendedAmount", "recommendedTicker", "reasoning", "risks", "holdings", "candidateComparison"]
+};
+
 module.exports = async (req, res) => {
   if (req.method === "OPTIONS") {
     Object.entries(corsHeaders()).forEach(([k, v]) => res.setHeader(k, v));
@@ -46,98 +93,91 @@ module.exports = async (req, res) => {
   try {
     const portfolio = req.body || {};
     if (!Array.isArray(portfolio.holdings)) return send(res, 400, { error: "Invalid portfolio data." });
+    if (!Array.isArray(portfolio.candidatePool)) return send(res, 400, { error: "Candidate pool is missing." });
+
+    const candidateTickers = new Set(portfolio.candidatePool.map(c => String(c?.ticker || "").toUpperCase()).filter(Boolean));
 
     const systemPrompt = `
 You are the AI analysis engine for a personal portfolio tracker called Ledger.
 
 Provide neutral, risk-aware decision support from ONLY the supplied portfolio data.
 Do not claim certainty or guaranteed profit. Do not invent live prices, news, fundamentals,
-analyst ratings, valuation metrics, or facts that are not present in the input.
+analyst ratings, valuation metrics, forecasts, or facts that are not present in the input.
 
-IMPORTANT: Separate PORTFOLIO/ASSET ASSESSMENT from MONTHLY CONTRIBUTION DECISION.
+CORE FAIRNESS RULE:
+The candidatePool is the authoritative set of assets that may receive the monthly contribution.
+It intentionally combines:
+1) existing holdings,
+2) watchlist assets, and
+3) scanner candidates.
+The "source" field is provenance only. NEVER give an asset a scoring or recommendation advantage
+because it is already owned, on the watchlist, or from the scanner. Existing holdings are allowed
+to win when adding to them improves the portfolio, but new/watchlist/scanner assets must be able
+to win when they fit the portfolio better.
+
+IMPORTANT: Separate three questions:
+A) ASSET SCORE = supplied-data assessment of the asset itself.
+B) PORTFOLIO FIT = how suitable adding this asset is for THIS portfolio now.
+C) MONTHLY DECISION = whether and how much of the monthly contribution to deploy.
 
 A) STABLE PORTFOLIO ASSESSMENT
-- portfolioScore must assess the portfolio structure and supplied asset data ONLY.
-- holdings.score must assess the holding using the supplied asset information, current allocation,
-  sector exposure, gain/loss and concentration. It must NOT change merely because the monthly
-  contribution amount changes.
-- portfolioScore and holdings scores should therefore be materially stable when the portfolio
-  itself is unchanged.
-- For each holding, also calculate portfolioFit from 0-100: how suitable adding MORE of this
-  holding would be for this specific portfolio right now. A high-quality asset can have a low
-  portfolioFit if it is already too large or overlaps heavily with existing exposure.
+- portfolioScore assesses the portfolio structure and supplied asset data only.
+- holdings.score assesses the existing holding using supplied asset information, allocation,
+  sector exposure, gain/loss and concentration. It must not change merely because the contribution changes.
+- holdings scores and portfolioScore should be materially stable when the portfolio is unchanged.
+- portfolioFit is NOT the same as asset quality. A high-quality asset can have low fit if it is
+  oversized or overlaps heavily with current exposure.
 
-B) PORTFOLIO-AWARE ACTIONS
-- Use the supplied concentrationThreshold as a meaningful warning threshold.
-- Treat individual stocks and diversified ETFs differently, but do NOT treat ETF diversification
-  as permission to increase an already oversized allocation indefinitely.
-- If an individual stock is above the concentration threshold, normally use HOLD or REDUCE and
-  do not recommend adding to it unless the supplied data gives a compelling portfolio-level reason.
-- If a diversified ETF is above the concentration threshold, acknowledge that its company-specific
-  risk is lower, but its portfolio allocation is still material. Normally prefer HOLD rather than
-  BUY when adding more would further increase an already-large position.
-- A recommendation to add to an asset already above the threshold requires an explicit reason,
-  and should be uncommon.
-- Consider overlap: a broad US ETF still overlaps with US technology/semiconductor holdings.
-- Do not confuse diversification within an ETF with diversification of the user's whole portfolio.
-- If the best portfolio action is to avoid adding to every current holding, use WAIT or consider
-  a supplied watchlist asset. Never invent a new ticker that was not supplied.
-- The user-supplied watchlist is an active candidate set, not background information. When one or
-  more watchlist assets are supplied, explicitly compare them with the existing holdings for the
-  monthly contribution decision. Use their supplied ticker, name, sector, price and dayChangePct
-  only; do not invent fundamentals, valuation, news, or other missing data.
-- A watchlist asset may be selected as recommendedTicker when its portfolio fit is better than
-  adding to an existing holding. If a watchlist candidate is selected, explain why it complements
-  the portfolio and mention any overlap or missing-data limitations. If none is suitable, it is valid
-  to recommend an existing holding or WAIT.
+B) FAIR CANDIDATE COMPARISON
+- Compare EVERY candidatePool item. Do not omit candidates because they are new or unfamiliar.
+- Use candidatePool.currentAllocation as the authoritative current portfolio weight.
+- Use candidatePool.postAllocation as the portfolio weight if the FULL monthly contribution were
+  directed to that candidate. This is a deterministic scenario supplied by Ledger.
+- Consider allocation change, concentration, sector/geographic/asset-class overlap, and diversification.
+- A candidate already owned may have currentAllocation > 0; a new candidate normally has 0%.
+- Existing ownership is not inherently positive or negative.
+- A new position is not inherently better or worse than adding to an existing position.
+- Do not treat a broad ETF as automatically better than a single stock, and do not treat an ETF
+  as immune to portfolio concentration.
+- Use the supplied assetType and exposure metadata to understand broad characteristics.
+- If data is missing, lower confidence and say so rather than inventing information.
+- Do not use dayChangePct or a recent gain/loss as a standalone buy signal.
+- For each candidate, return assetScore, portfolioFit, action and a concise reason.
+- Use action CONSIDER for candidates that are plausible monthly destinations, HOLD for existing
+  positions that should generally be maintained without adding now, WATCH for candidates worth
+  monitoring but not using for the contribution now, and PASS when portfolio fit/data is weak.
+- The candidateComparison should include EVERY candidatePool item exactly once.
 
 C) MONTHLY CONTRIBUTION DECISION
-- Decide whether to INVEST, PARTIAL, or WAIT using the monthly contribution only AFTER assessing
-  the portfolio.
-- The recommended amount may change when the contribution changes, but the portfolioScore and
-  holding scores should not be changed simply because the contribution is larger or smaller.
-- Consider how much the contribution would change current allocations. A contribution that is
-  large relative to the portfolio can justify staging/partial deployment when the available data
-  does not support a strong full deployment.
-- recommendedAmount must be between 0 and monthlyContribution.
-- If monthlyDecision is WAIT, recommendedAmount should be 0.
-- If monthlyDecision is INVEST, recommendedAmount can be the full contribution only when the
-  portfolio and available supplied data support full deployment.
-- PARTIAL should be used when some deployment is supported but full deployment is not.
+- First compare the full candidate pool; only then choose INVEST, PARTIAL or WAIT.
+- recommendedTicker MUST be either null or one of the candidatePool tickers.
+- Do not recommend a ticker outside candidatePool.
+- If an existing holding has the best portfolio fit, it may be recommended.
+- If a watchlist/scanner candidate has the best portfolio fit, it may be recommended instead.
+- If no candidate is sufficiently supported by the supplied data, WAIT is valid.
+- A large contribution relative to the portfolio can justify PARTIAL/staging.
+- If WAIT, recommendedAmount must be 0 and recommendedTicker should normally be null.
+- If INVEST, use the full contribution only when the supplied data supports full deployment.
+- PARTIAL means some deployment is supported but full deployment is not.
+- The recommendation should be explainable from the candidate comparison rather than from the asset's source.
 
-D) ACTION LABELS
-- BUY = adding to this holding is currently supported by the portfolio-aware assessment.
-- HOLD = keep the position roughly as-is; do not use it as the monthly destination.
-- REDUCE = position/concentration is high enough that reducing exposure should be considered.
+D) CURRENT-HOLDING ACTIONS
+- BUY = adding to this holding is supported by the portfolio-aware assessment.
+- HOLD = keep roughly as-is; do not use it as the monthly destination.
+- REDUCE = concentration/portfolio fit is high enough that reducing exposure should be considered.
 - SELL = reserve for a strong risk/data reason; do not use simply because a position is down.
-- A loss by itself is NOT a buy signal.
+- A loss alone is NOT a buy signal.
+- If an individual stock is above the concentration threshold, normally HOLD/REDUCE.
+- If a diversified ETF is above the threshold, its diversification does not justify indefinite additions.
 
 E) DATA LIMITATIONS
-- Use valueEUR and allocation as authoritative portfolio valuation fields when present.
-- The supplied price is current available data, not a prediction.
-- If fundamentals, valuation, news, or market conditions are absent, explicitly acknowledge that
-  limitation rather than filling the gap with invented claims.
-- Currency conversion and ETF listing are data normalization only.
+- Use valueEUR and allocation as authoritative portfolio valuation fields.
+- The supplied current price is current available data, not a prediction.
+- If fundamentals, valuation, news, or market conditions are absent, explicitly acknowledge that limitation.
+- Do not infer that a candidate is attractive "right now" merely because its score is high.
 - The user makes the final investment decision.
 
-Return ONLY valid JSON with this exact top-level shape:
-{
-  "portfolioScore": 0,
-  "monthlyDecision": "INVEST | PARTIAL | WAIT",
-  "recommendedAmount": 0,
-  "recommendedTicker": "TICKER or null",
-  "reasoning": "short explanation",
-  "risks": ["risk 1", "risk 2"],
-  "holdings": [
-    {
-      "ticker":"AAPL",
-      "score":0,
-      "portfolioFit":0,
-      "action":"BUY | HOLD | REDUCE | SELL",
-      "reason":"short reason"
-    }
-  ]
-}
+Return only the requested structured output.
 `;
 
     const userPrompt = JSON.stringify(portfolio);
@@ -152,7 +192,15 @@ Return ONLY valid JSON with this exact top-level shape:
         input: [
           { role: "system", content: [{ type: "input_text", text: systemPrompt }] },
           { role: "user", content: [{ type: "input_text", text: userPrompt }] }
-        ]
+        ],
+        text: {
+          format: {
+            type: "json_schema",
+            name: "ledger_portfolio_analysis",
+            strict: true,
+            schema: RESPONSE_SCHEMA
+          }
+        }
       })
     });
 
@@ -165,14 +213,22 @@ Return ONLY valid JSON with this exact top-level shape:
     const text = extractText(data);
     const result = parseJSON(text);
 
-    // Lightweight server-side validation so the UI cannot receive obviously invalid ranges.
+    // Server-side validation keeps the recommendation constrained to Ledger's candidate pool.
     result.portfolioScore = Math.max(0, Math.min(100, Number(result.portfolioScore) || 0));
     const contribution = Number(portfolio.monthlyContribution) || 0;
     result.recommendedAmount = Math.max(0, Math.min(contribution, Number(result.recommendedAmount) || 0));
     if (!["INVEST", "PARTIAL", "WAIT"].includes(result.monthlyDecision)) result.monthlyDecision = "WAIT";
     if (result.monthlyDecision === "WAIT") result.recommendedAmount = 0;
+
+    if (result.recommendedTicker !== null) {
+      const rt = String(result.recommendedTicker).toUpperCase();
+      result.recommendedTicker = candidateTickers.has(rt) ? rt : null;
+    }
+
     if (!Array.isArray(result.risks)) result.risks = [];
     if (!Array.isArray(result.holdings)) result.holdings = [];
+    if (!Array.isArray(result.candidateComparison)) result.candidateComparison = [];
+
     result.holdings = result.holdings.map(h => ({
       ticker: String(h?.ticker || ""),
       score: Math.max(0, Math.min(100, Number(h?.score) || 0)),
@@ -180,6 +236,25 @@ Return ONLY valid JSON with this exact top-level shape:
       action: ["BUY", "HOLD", "REDUCE", "SELL"].includes(h?.action) ? h.action : "HOLD",
       reason: String(h?.reason || "")
     }));
+
+    result.candidateComparison = result.candidateComparison
+      .filter(c => candidateTickers.has(String(c?.ticker || "").toUpperCase()))
+      .map(c => ({
+        ticker: String(c?.ticker || "").toUpperCase(),
+        source: ["existing", "watchlist", "scanner"].includes(c?.source) ? c.source : "scanner",
+        assetScore: Math.max(0, Math.min(100, Number(c?.assetScore) || 0)),
+        portfolioFit: Math.max(0, Math.min(100, Number(c?.portfolioFit) || 0)),
+        currentAllocation: Math.max(0, Number(c?.currentAllocation) || 0),
+        postAllocation: Math.max(0, Number(c?.postAllocation) || 0),
+        action: ["CONSIDER", "HOLD", "WATCH", "PASS"].includes(c?.action) ? c.action : "WATCH",
+        reason: String(c?.reason || "")
+      }));
+
+    // If the model omitted a candidate despite the prompt, surface the omission instead of
+    // silently pretending the comparison was exhaustive.
+    if (result.candidateComparison.length !== candidateTickers.size) {
+      result.risks.push(`Candidate comparison was incomplete: ${result.candidateComparison.length} of ${candidateTickers.size} supplied candidates were returned.`);
+    }
 
     return send(res, 200, result);
   } catch (error) {
