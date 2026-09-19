@@ -1052,7 +1052,9 @@
         currentValueEUR:Number(current),
         currentAllocation:Number(c.currentAllocation||0),
         postAllocation:Number(postAllocation),
-        allocationChange:Number(postAllocation-(c.currentAllocation||0))
+        allocationChange:Number(postAllocation-(c.currentAllocation||0)),
+        concentrationThreshold:Number(threshold),
+        fullContributionBreachesThreshold:postAllocation > Number(threshold)
       };
     });
   }
