@@ -949,19 +949,20 @@
   // Phase 2 starts with a deliberately small, transparent universe.
   // We can expand this later once the scanner is proven reliable.
   const OPPORTUNITY_UNIVERSE = {
-    VUAA:{name:'Vanguard S&P 500 UCITS ETF',sector:'US Large Cap / Broad Market ETF',assetType:'Diversified ETF',exposure:'US large-cap equities; S&P 500; includes US technology exposure'},
-    VOO:{name:'Vanguard S&P 500 ETF',sector:'US Large Cap ETF',assetType:'Diversified ETF',exposure:'US large-cap equities; S&P 500; includes US technology exposure'},
-    VTI:{name:'Vanguard Total Stock Market ETF',sector:'US Total Market ETF',assetType:'Diversified ETF',exposure:'Broad US equities across large-, mid- and small-cap companies'},
-    VXUS:{name:'Vanguard Total International Stock ETF',sector:'International Equity ETF',assetType:'Diversified ETF',exposure:'Non-US developed and emerging-market equities'},
-    QQQ:{name:'Invesco QQQ Trust',sector:'US Growth / Technology ETF',assetType:'Diversified ETF',exposure:'US large-cap growth; Nasdaq-100; concentrated technology/growth exposure'},
-    SCHD:{name:'Schwab U.S. Dividend Equity ETF',sector:'US Dividend Equity ETF',assetType:'Diversified ETF',exposure:'US dividend-oriented equities'},
-    IWM:{name:'iShares Russell 2000 ETF',sector:'US Small Cap ETF',assetType:'Diversified ETF',exposure:'US small-cap equities'},
-    XLV:{name:'Health Care Select Sector SPDR Fund',sector:'US Healthcare ETF',assetType:'Sector ETF',exposure:'US healthcare sector'},
-    XLI:{name:'Industrial Select Sector SPDR Fund',sector:'US Industrials ETF',assetType:'Sector ETF',exposure:'US industrials sector'},
-    XLP:{name:'Consumer Staples Select Sector SPDR Fund',sector:'US Consumer Staples ETF',assetType:'Sector ETF',exposure:'US consumer staples sector'},
-    VNQ:{name:'Vanguard Real Estate ETF',sector:'US Real Estate ETF',assetType:'Sector ETF',exposure:'US real estate equities/REITs'},
-    BND:{name:'Vanguard Total Bond Market ETF',sector:'US Bond ETF',assetType:'Bond ETF',exposure:'Broad US investment-grade bond market'},
-    GLD:{name:'SPDR Gold Shares',sector:'Gold ETF',assetType:'Commodity ETF',exposure:'Gold exposure'}
+    // Revolut-oriented EU/UCITS universe. US-only ETF tickers such as VOO, VTI, VXUS,
+    // QQQ, SCHD, IWM, XLV, XLI, XLP, VNQ and BND are intentionally not used as
+    // actionable candidates because the user invests through Revolut Malta.
+    VUAA:{name:'Vanguard S&P 500 UCITS ETF',sector:'US Large Cap / Broad Market ETF',assetType:'Diversified ETF',exposure:'US large-cap equities; S&P 500; includes US technology exposure',broker:'Revolut',availability:'confirmed_existing'},
+    VWCE:{name:'Vanguard FTSE All-World UCITS ETF',sector:'Global Equity ETF',assetType:'Diversified ETF',exposure:'Global developed and emerging-market equities; includes substantial US exposure',broker:'Revolut',availability:'verify_in_app'},
+    CNDX:{name:'iShares NASDAQ 100 UCITS ETF',sector:'US Growth / Technology ETF',assetType:'Diversified ETF',exposure:'Nasdaq-100; concentrated US growth and technology exposure',broker:'Revolut',availability:'verify_in_app'},
+    VHYL:{name:'Vanguard FTSE All-World High Dividend Yield UCITS ETF',sector:'Global Dividend Equity ETF',assetType:'Diversified ETF',exposure:'Global dividend-paying equities across developed and emerging markets',broker:'Revolut',availability:'verify_in_app'},
+    WSML:{name:'iShares MSCI World Small Cap UCITS ETF',sector:'Global Small Cap ETF',assetType:'Diversified ETF',exposure:'Small-cap equities across developed markets',broker:'Revolut',availability:'verify_in_app'},
+    IUHC:{name:'iShares S&P 500 Health Care Sector UCITS ETF',sector:'US Healthcare ETF',assetType:'Sector ETF',exposure:'US healthcare sector',broker:'Revolut',availability:'verify_in_app'},
+    IUIS:{name:'iShares S&P 500 Industrials Sector UCITS ETF',sector:'US Industrials ETF',assetType:'Sector ETF',exposure:'US industrials sector',broker:'Revolut',availability:'verify_in_app'},
+    IUCS:{name:'iShares S&P 500 Consumer Staples Sector UCITS ETF',sector:'US Consumer Staples ETF',assetType:'Sector ETF',exposure:'US consumer staples sector',broker:'Revolut',availability:'verify_in_app'},
+    IWDP:{name:'iShares Developed Markets Property Yield UCITS ETF',sector:'Global Property ETF',assetType:'Property ETF',exposure:'Developed-market listed property companies and REITs',broker:'Revolut',availability:'verify_in_app'},
+    VAGF:{name:'Vanguard Global Aggregate Bond UCITS ETF EUR Hedged Accumulating',sector:'Global Bond ETF',assetType:'Bond ETF',exposure:'Global investment-grade and government bonds; EUR-hedged',broker:'Revolut',availability:'verify_in_app'},
+    IGLN:{name:'iShares Physical Gold ETC',sector:'Gold ETP',assetType:'Commodity ETP',exposure:'Physical gold exposure',broker:'Revolut',availability:'verify_in_app'}
   };
 
   // Candidate metadata is deliberately shared between existing holdings, watchlist
@@ -991,6 +992,8 @@
         sector:(meta[h.ticker]||{}).sector||base.sector||v.info.sector||'Unclassified',
         assetType:base.assetType || 'Individual stock',
         exposure:base.exposure || ((meta[h.ticker]||{}).sector ? `Exposure associated with ${((meta[h.ticker]||{}).sector)}` : 'Not classified'),
+        broker:base.broker || 'Revolut',
+        availability:base.availability || 'confirmed_existing',
         currentValueEUR:value===null?null:Number(value),
         currentAllocation:Number(allocation),
         price:v.nativePrice===null?null:Number(v.nativePrice),
@@ -1010,6 +1013,8 @@
           sector:(meta[t]||{}).sector||base.sector||info.sector||'Unclassified',
           assetType:base.assetType || 'Candidate asset',
           exposure:base.exposure || 'Not classified from supplied data',
+          broker:base.broker || 'Revolut',
+          availability:base.availability || 'verify_in_app',
           currentValueEUR:0,
           currentAllocation:0,
           price:q ? Number(q.price) : null,
@@ -1028,6 +1033,8 @@
           sector:info.sector,
           assetType:info.assetType,
           exposure:info.exposure,
+          broker:info.broker || 'Revolut',
+          availability:info.availability || 'verify_in_app',
           currentValueEUR:0,
           currentAllocation:0,
           price:q ? Number(q.price) : null,
@@ -1105,7 +1112,8 @@
       holdings:portfolio,
       watchlist:watch,
       candidatePool:buildCandidatePool(totalValue,totalAfterContribution,monthlyContribution),
-      note:'Fair candidate test: existing holdings, watchlist assets and scanner assets are in one neutral candidate pool. source indicates provenance only and must not influence scores or recommendation. Candidate postAllocation assumes the full monthly contribution is directed to that candidate. Static asset metadata describes exposure; no missing fundamentals, valuation, news or forecasts should be invented.'
+      brokerNote:'Revolut Malta supports EU-listed exchange-traded products, but individual instrument availability can vary. Existing holdings are confirmed by ownership. New candidates marked verify_in_app must be checked in Revolut before being treated as executable.',
+      note:'Fair candidate test: existing holdings, watchlist assets and Revolut-oriented UCITS/ETP candidates are in one neutral candidate pool. source indicates provenance only and must not influence scores or recommendation. Candidate postAllocation assumes the full monthly contribution is directed to that candidate. Static asset metadata describes exposure; no missing fundamentals, valuation, news or forecasts should be invented.'
     };
   }
 
@@ -1122,6 +1130,7 @@
     const holdings = Array.isArray(result.holdings) ? result.holdings : [];
     const candidates = Array.isArray(result.candidateComparison) ? result.candidateComparison : [];
     const risks = Array.isArray(result.risks) ? result.risks : [];
+    const candidateMeta = new Map(buildCandidatePool(0, 0, 0).map(c => [c.ticker, c]));
 
     $('aiResult').className = '';
     $('aiResult').innerHTML = `
@@ -1135,10 +1144,10 @@
 
       ${candidates.length ? `
         <div style="margin-top:18px;font-size:13px;font-weight:600;">Fair candidate comparison</div>
-        <div class="candidate-note">Existing holdings, watchlist assets and scanner candidates are compared together. The source column shows where each candidate came from; it does not give the candidate an advantage.</div>
+        <div class="candidate-note">Existing holdings, watchlist assets and Revolut-oriented UCITS/ETP candidates are compared together. Broker availability is shown separately and does not affect asset quality. New candidates marked “verify” must be confirmed in Revolut before investing.</div>
         <div class="candidate-grid">
           <table>
-            <thead><tr><th>Ticker</th><th>Source</th><th class="num">Asset score</th><th class="num">Portfolio fit</th><th class="num">Current wt.</th><th class="num">After €${Number(amount||0).toFixed(0)}</th><th>Action</th><th>Reason</th></tr></thead>
+            <thead><tr><th>Ticker</th><th>Source</th><th class="num">Asset score</th><th class="num">Portfolio fit</th><th class="num">Current wt.</th><th class="num">After €${Number(amount||0).toFixed(0)}</th><th>Action</th><th>Broker</th><th>Reason</th></tr></thead>
             <tbody>${candidates.map(c=>`
               <tr>
                 <td class="tick">${escapeAI(c.ticker)}</td>
@@ -1148,6 +1157,7 @@
                 <td class="num">${Number(c.currentAllocation||0).toFixed(1)}%</td>
                 <td class="num">${Number(c.postAllocation||0).toFixed(1)}%</td>
                 <td><span class="ai-badge">${escapeAI(c.action)}</span></td>
+                <td>${escapeAI((candidateMeta.get(c.ticker)||{}).broker||'Revolut')} ${(candidateMeta.get(c.ticker)||{}).availability==='verify_in_app'?'· verify':'· confirmed'}</td>
                 <td>${escapeAI(c.reason)}</td>
               </tr>`).join('')}</tbody>
           </table>
