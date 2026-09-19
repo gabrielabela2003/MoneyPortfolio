@@ -387,9 +387,10 @@
     </div>
     <div class="opp-controls">
       <button class="btn" id="scanOppBtn">Scan opportunities</button>
-      <span class="opp-status">Uses live quotes, available fundamentals and recent news plus your current portfolio.</span>
+      <span class="opp-status">Only Revolut-confirmed instruments are included in the actual opportunity scan.</span>
     </div>
-    <div id="opportunityWrap"><div class="empty">Run a scan to see assets that may complement your portfolio.</div></div>
+    <div id="revolutQueue"></div>
+    <div id="opportunityWrap"><div class="empty">Run a scan to see Revolut-available assets that may complement your portfolio.</div></div>
     <div class="opp-note">
       This scanner is portfolio-fit research, not a prediction engine. It uses Ledger's live market data plus available fundamentals and recent news; missing data is not invented.
     </div>
@@ -469,6 +470,29 @@
     localStorage.setItem(LS_REVOLUT, JSON.stringify(revolutConfirmed));
     save();
     renderWatchlist();
+    renderRevolutQueue();
+  }
+
+  // Strict broker gate: unconfirmed instruments are kept out of the actual
+  // opportunity scan. They appear only in this verification queue so the user
+  // can check the exact instrument in Revolut before it enters the scan.
+  function renderRevolutQueue(){
+    const wrap=$('revolutQueue');
+    if(!wrap) return;
+    const pending=Object.entries(OPPORTUNITY_UNIVERSE).filter(([t])=>!isRevolutConfirmed(t));
+    if(!pending.length){
+      wrap.innerHTML='<div class="candidate-note"><strong>Revolut gate:</strong> all configured scanner instruments are confirmed. Only these confirmed instruments will be scanned.</div>';
+      return;
+    }
+    wrap.innerHTML=`<div class="candidate-note" style="margin:14px 0 8px;"><strong>Revolut verification queue:</strong> these instruments are <em>not</em> included in the opportunity scan yet. Check the exact instrument in your Revolut Invest app, then confirm it here.</div>
+      <div class="opp-grid"><table><thead><tr><th>Ticker</th><th>Instrument</th><th>Verification</th><th></th></tr></thead><tbody>
+      ${pending.map(([ticker,info])=>`<tr><td class="tick">${escapeHtml(ticker)}</td><td>${escapeHtml(info.name)}</td><td><span class="opp-badge">VERIFY IN REVOLUT</span></td><td><button class="btn ghost queue-confirm" data-ticker="${escapeHtml(ticker)}">Confirm Revolut</button></td></tr>`).join('')}
+      </tbody></table></div>`;
+    wrap.querySelectorAll('.queue-confirm').forEach(btn=>btn.onclick=()=>{
+      const t=btn.dataset.ticker;
+      setRevolutConfirmed(t,true);
+      scanOpportunities();
+    });
   }
   function getMarketSymbols(ticker){
     const info = OPPORTUNITY_UNIVERSE[ticker];
@@ -1317,32 +1341,36 @@
       const v=valuations[i]; const value=v.valueEUR;
       return {ticker:h.ticker,name:(meta[h.ticker]||{}).name||v.info.name||h.ticker,sector:(meta[h.ticker]||{}).sector||v.info.sector||'Unclassified',allocation:totalValue&&value!==null?Number(value/totalValue*100):null,valueEUR:value===null?null:Number(value),research:research[h.ticker]||null};
     });
-    const candidates = Object.entries(OPPORTUNITY_UNIVERSE).map(([ticker,info])=>{
-      const q=quotes[ticker];
-      const r=research[ticker]||{};
-      return {ticker,name:info.name,sector:info.sector,assetType:info.assetType,exposure:info.exposure,broker:info.broker,availability:isRevolutConfirmed(ticker)?'confirmed':'verify_in_app',revolutConfirmed:isRevolutConfirmed(ticker),marketSymbol:q?.marketSymbol||r.marketSymbol||null,price:q?Number(q.price):r.price??null,dayChangePct:q&&q.prevClose?Number((q.price-q.prevClose)/q.prevClose*100):r.dayChangePct??null,research:r};
-    });
+    // HARD FILTER: only instruments explicitly confirmed as available in
+    // Revolut are allowed into the actual scanner dataset. Unconfirmed assets
+    // stay in the verification queue and are never sent to the AI.
+    const candidates = Object.entries(OPPORTUNITY_UNIVERSE)
+      .filter(([ticker])=>isRevolutConfirmed(ticker))
+      .map(([ticker,info])=>{
+        const q=quotes[ticker];
+        const r=research[ticker]||{};
+        return {ticker,name:info.name,sector:info.sector,assetType:info.assetType,exposure:info.exposure,broker:info.broker,availability:'confirmed',revolutConfirmed:true,marketSymbol:q?.marketSymbol||r.marketSymbol||null,price:q?Number(q.price):r.price??null,dayChangePct:q&&q.prevClose?Number((q.price-q.prevClose)/q.prevClose*100):r.dayChangePct??null,research:r};
+      });
     const quoteCoverage=candidates.filter(c=>Number.isFinite(Number(c.price))&&Number(c.price)>0).length/candidates.length;
     const qualityHint=quoteCoverage>=0.9?'HIGH':quoteCoverage>=0.65?'MEDIUM':'LOW';
     return {currency:'EUR',fx:{EUR:1,USD:fxRates.USD},totalPortfolioValue:totalValue===null?null:Number(totalValue),concentrationThreshold:Number(threshold),holdings:current,candidates,monthlyContribution:Number(parseFloat($('monthlyContribution').value)||0),researchWindowDays:7,dataQualityHint:qualityHint,quoteCoveragePct:Number((quoteCoverage*100).toFixed(1))};
   }
 
   function renderOpportunityResult(result){
-    const rows=Array.isArray(result.opportunities)?result.opportunities:[];
+    const rows=Array.isArray(result.opportunities)?result.opportunities.filter(o=>isRevolutConfirmed(o.ticker)) : [];
     const wrap=$('opportunityWrap');
-    if(!rows.length){wrap.className='empty';wrap.textContent='No usable candidates were returned.';return;}
+    if(!rows.length){wrap.className='empty';wrap.textContent='No Revolut-confirmed opportunity candidates are currently available. Confirm instruments in the verification queue above, then scan again.';return;}
     const researchByTicker=result.researchByTicker||{};
     wrap.className='';
     wrap.innerHTML=`<div class="opp-grid"><table>
       <thead><tr><th>Ticker</th><th class="num">Asset score</th><th class="num">Portfolio fit</th><th>Action</th><th>Revolut</th><th>Live data</th><th>Reason</th><th></th></tr></thead>
-      <tbody>${rows.map(o=>{const r=researchByTicker[o.ticker]||{}; const f=r.fundamentals; const news=Array.isArray(r.news)?r.news:[]; const quote=r.quoteAvailable&&r.price!=null?`€${Number(r.price).toFixed(2)} · ${r.dayChangePct==null?'1D —':`1D ${r.dayChangePct>=0?'+':''}${Number(r.dayChangePct).toFixed(2)}%`}`:'Quote unavailable'; const detail=r.assetType==='Individual stock' ? `Fundamentals ${f?'available':'missing'} · News ${news.length}` : `ETF metadata ${r.metadataAvailable?'available':'missing'} · News ${news.length}`; const live=`${quote} · ${detail}`; const source=r.quoteSource||'quote source unavailable'; const confirmed=isRevolutConfirmed(o.ticker); const symbol=r.marketSymbol; return `<tr>
-        <td class="tick">${escapeAI(o.ticker)}</td><td class="score">${escapeAI(o.assetScore)}/100</td><td class="score">${escapeAI(o.portfolioFit)}/100</td><td><span class="opp-badge">${escapeAI(confirmed?o.action:'WATCH')}</span></td><td><span class="opp-badge">${confirmed?'CONFIRMED':'VERIFY'}</span>${confirmed?'<div class="candidate-note">Confirmed by you in Ledger.</div>':'<div class="candidate-note">Check exact instrument in Revolut Invest.</div>'}</td><td>${escapeAI(live)}${symbol?`<div class="candidate-note">${escapeAI(symbol)} · ${escapeAI(source)}</div>`:''}</td><td class="opp-reason">${escapeAI(o.reason)}${confirmed?'':`<div class="candidate-note"><strong>Revolut gate:</strong> this candidate cannot become actionable until you confirm the exact instrument is available in your Revolut Invest app.</div>`}</td><td><button class="btn ghost opp-add" data-ticker="${escapeHtml(o.ticker)}">Add to watchlist</button>${confirmed?`<button class="btn ghost opp-unconfirm" data-ticker="${escapeHtml(o.ticker)}">Revoke</button>`:`<button class="btn ghost opp-confirm" data-ticker="${escapeHtml(o.ticker)}">Confirm Revolut</button>`}</td>
+      <tbody>${rows.map(o=>{const r=researchByTicker[o.ticker]||{}; const f=r.fundamentals; const news=Array.isArray(r.news)?r.news:[]; const quote=r.quoteAvailable&&r.price!=null?`€${Number(r.price).toFixed(2)} · ${r.dayChangePct==null?'1D —':`1D ${r.dayChangePct>=0?'+':''}${Number(r.dayChangePct).toFixed(2)}%`}`:'Quote unavailable'; const detail=r.assetType==='Individual stock' ? `Fundamentals ${f?'available':'missing'} · News ${news.length}` : `ETF metadata ${r.metadataAvailable?'available':'missing'} · News ${news.length}`; const live=`${quote} · ${detail}`; const source=r.quoteSource||'quote source unavailable'; const symbol=r.marketSymbol; return `<tr>
+        <td class="tick">${escapeAI(o.ticker)}</td><td class="score">${escapeAI(o.assetScore)}/100</td><td class="score">${escapeAI(o.portfolioFit)}/100</td><td><span class="opp-badge">${escapeAI(o.action)}</span></td><td><span class="opp-badge">CONFIRMED</span><div class="candidate-note">Confirmed in Ledger after checking Revolut.</div></td><td>${escapeAI(live)}${symbol?`<div class="candidate-note">${escapeAI(symbol)} · ${escapeAI(source)}</div>`:''}</td><td class="opp-reason">${escapeAI(o.reason)}</td><td><button class="btn ghost opp-add" data-ticker="${escapeHtml(o.ticker)}">Add to watchlist</button><button class="btn ghost opp-unconfirm" data-ticker="${escapeHtml(o.ticker)}">Revoke</button></td>
       </tr>`;}).join('')}</tbody></table></div>
       ${result.summary?`<div class="ai-reason"><strong>Research summary:</strong> ${escapeAI(result.summary)}</div>`:''}
       ${result.researchNotes?.length?`<div class="candidate-note"><strong>Data notes:</strong> ${result.researchNotes.map(escapeAI).join(' · ')}</div>`:''}
       <div class="candidate-note">Live research covers the last 7 days of available news. Revolut availability is a hard actionability gate: every non-owned instrument starts unconfirmed and remains WATCH until you explicitly confirm the exact instrument in Revolut. Stock fundamentals are retrieved where supported; ETFs/ETPs may not expose company-style metrics. Missing data is shown as missing rather than estimated.</div>`;
     wrap.querySelectorAll('.opp-add').forEach(btn=>btn.onclick=()=>{const t=btn.dataset.ticker;if(!watchlist.includes(t)){watchlist.push(t);save();renderWatchlist();}btn.textContent='Added';btn.disabled=true;});
-    wrap.querySelectorAll('.opp-confirm').forEach(btn=>btn.onclick=()=>{setRevolutConfirmed(btn.dataset.ticker,true);btn.textContent='Confirmed';btn.disabled=true;scanOpportunities();});
     wrap.querySelectorAll('.opp-unconfirm').forEach(btn=>btn.onclick=()=>{setRevolutConfirmed(btn.dataset.ticker,false);scanOpportunities();});
   }
 
@@ -1351,7 +1379,15 @@
     btn.disabled=true;btn.textContent='Scanning…';status.textContent='loading live prices…';
     try{
       if(!apiKey) throw new Error('Add your Finnhub API key in Settings first.');
-      const candidates=Object.keys(OPPORTUNITY_UNIVERSE);
+      renderRevolutQueue();
+      // HARD FILTER: only confirmed Revolut instruments are scanned.
+      const candidates=Object.keys(OPPORTUNITY_UNIVERSE).filter(isRevolutConfirmed);
+      if(!candidates.length){
+        wrap.className='empty';
+        wrap.textContent='No Revolut-confirmed scanner instruments. Confirm at least one exact instrument in the verification queue above.';
+        status.textContent='no confirmed instruments';
+        return;
+      }
       for(const t of candidates){try{quotes[t]=await fetchQuote(t);}catch(e){quotes[t]=null;}}
       status.textContent='loading exchange quotes…';
       try{ await fetchSupplementalQuotes(candidates); }catch(e){}
@@ -1362,10 +1398,12 @@
       const res=await fetch(OPPORTUNITY_ENDPOINT,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(buildOpportunityData(research))});
       const data=await res.json();if(!res.ok)throw new Error(data.error||'Opportunity scan failed');
       data.researchByTicker=research;renderOpportunityResult(data);
-      const quality=buildOpportunityData(research).dataQualityHint||data.dataQuality||'LOW'; status.textContent=`scan updated · ${Array.isArray(data.opportunities)?data.opportunities.length:0} candidates · ${quality} data quality`;
+      const quality=buildOpportunityData(research).dataQualityHint||data.dataQuality||'LOW'; status.textContent=`scan updated · ${Array.isArray(data.opportunities)?data.opportunities.length:0} Revolut-confirmed candidates · ${quality} data quality`;
     }catch(e){wrap.className='empty ai-error';wrap.textContent='Opportunity scan failed: '+e.message;status.textContent='error';}
     finally{btn.disabled=false;btn.textContent='Scan opportunities';}
   }
+
+  renderRevolutQueue();
 
   async function analyzePortfolio(){
     const btn=$('analyzeBtn');
